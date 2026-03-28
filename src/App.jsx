@@ -228,7 +228,7 @@ function App() {
             fontSize: '24px',
             fontWeight: 'bold',
             color: '#111827'
-          }}>虎窝导航</h1>
+          }}>小鹏导航</h1>
           <div style={{ 
             display: 'flex',
             gap: '8px'
