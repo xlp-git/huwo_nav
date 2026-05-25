@@ -84,7 +84,8 @@ function App() {
     () => [...new Set(sites.map(site => site.category).filter(Boolean))],
     [sites]
   )
-  const [activeCategory, setActiveCategory] = useState('')
+  const [activeCategory, setActiveCategory] = useState(null)
+  const effectiveCategory = activeCategory !== null ? activeCategory : (categories[0] || '')
   const [editMode, setEditMode] = useState(false)
   const [password, setPassword] = useState('')
   const [passwordError, setPasswordError] = useState('')
@@ -96,7 +97,7 @@ function App() {
 
   // 过滤当前分类的站点
   const filteredSites = sites.filter(site => {
-    const categoryMatch = !activeCategory || site.category === activeCategory
+    const categoryMatch = !effectiveCategory || site.category === effectiveCategory
     const searchMatch = !searchTerm || 
                        site.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
                        site.url.toLowerCase().includes(searchTerm.toLowerCase())
@@ -452,26 +453,50 @@ function App() {
         borderRadius: '8px',
         overflow: 'hidden'
       }}>
-        {categories.map(category => (
-          <button
-            key={category}
-            onClick={() => setActiveCategory(category)}
-            style={{ 
+        <button
+            onClick={() => setActiveCategory('')}
+            style={{
               padding: '8px 16px',
               borderRadius: '8px',
-              backgroundColor: activeCategory === category ? '#2563eb' : 'white',
-              color: activeCategory === category ? 'white' : '#4b5563',
+              backgroundColor: effectiveCategory === '' ? '#2563eb' : 'white',
+              color: effectiveCategory === '' ? 'white' : '#4b5563',
               cursor: 'pointer',
-              border: activeCategory === category ? '1px solid #2563eb' : '1px solid #e5e7eb',
+              border: effectiveCategory === '' ? '1px solid #2563eb' : '1px solid #e5e7eb',
               overflow: 'hidden'
             }}
             onMouseEnter={(e) => {
-              if (activeCategory !== category) {
+              if (effectiveCategory !== '') {
                 e.currentTarget.style.backgroundColor = '#f3f4f6'
               }
             }}
             onMouseLeave={(e) => {
-              if (activeCategory !== category) {
+              if (effectiveCategory !== '') {
+                e.currentTarget.style.backgroundColor = 'white'
+              }
+            }}
+          >
+            全部
+          </button>
+        {categories.map(category => (
+          <button
+            key={category}
+            onClick={() => setActiveCategory(category)}
+            style={{
+              padding: '8px 16px',
+              borderRadius: '8px',
+              backgroundColor: effectiveCategory === category ? '#2563eb' : 'white',
+              color: effectiveCategory === category ? 'white' : '#4b5563',
+              cursor: 'pointer',
+              border: effectiveCategory === category ? '1px solid #2563eb' : '1px solid #e5e7eb',
+              overflow: 'hidden'
+            }}
+            onMouseEnter={(e) => {
+              if (effectiveCategory !== category) {
+                e.currentTarget.style.backgroundColor = '#f3f4f6'
+              }
+            }}
+            onMouseLeave={(e) => {
+              if (effectiveCategory !== category) {
                 e.currentTarget.style.backgroundColor = 'white'
               }
             }}
@@ -492,13 +517,13 @@ function App() {
         overflow: 'hidden'
       }}>
         {/* 分类标题 */}
-        {activeCategory && (
-          <h2 style={{ 
+        {effectiveCategory && (
+          <h2 style={{
             fontSize: '18px',
             fontWeight: '600',
             color: '#111827',
             marginBottom: '16px'
-          }}>{activeCategory}</h2>
+          }}>{effectiveCategory}</h2>
         )}
         
         {/* 站点图标网格 */}
