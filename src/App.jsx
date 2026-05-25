@@ -15,13 +15,48 @@ function getFaviconUrl(url, tier) {
   try {
     const domain = new URL(url).hostname
     switch (tier) {
-      case 0: return `https://www.google.com/s2/favicons?domain=${domain}&sz=64`
-      case 1: return `https://favicon.im/${domain}`
+      case 0: return `https://favicon.im/${domain}`
+      case 1: return `https://www.google.com/s2/favicons?domain=${domain}&sz=64`
       default: return null
     }
   } catch {
     return null
   }
+}
+
+const FAVICON_TIMEOUT = 5000
+
+function FaviconImg({ url }) {
+  const [tier, setTier] = useState(0)
+  const timerRef = useRef(null)
+  const mountedRef = useRef(true)
+
+  useEffect(() => {
+    mountedRef.current = true
+    return () => { mountedRef.current = false }
+  }, [])
+
+  useEffect(() => {
+    clearTimeout(timerRef.current)
+    if (tier < 2) {
+      timerRef.current = setTimeout(() => {
+        if (mountedRef.current) setTier(t => t + 1)
+      }, FAVICON_TIMEOUT)
+    }
+    return () => clearTimeout(timerRef.current)
+  }, [tier, url])
+
+  const src = tier < 2 ? (getFaviconUrl(url, tier) || FAVICON_SVG) : FAVICON_SVG
+
+  return (
+    <img
+      src={src}
+      alt="icon"
+      style={{ width: '40px', height: '40px', objectFit: 'contain' }}
+      onLoad={() => clearTimeout(timerRef.current)}
+      onError={() => { clearTimeout(timerRef.current); setTier(t => t + 1) }}
+    />
+  )
 }
 
 function App() {
@@ -569,26 +604,7 @@ function App() {
                 justifyContent: 'center',
                 backgroundColor: '#f3f4f6'
               }}>
-                <img 
-                  src={getFaviconUrl(site.url, 0)}
-                  alt={`${site.name} icon`}
-                  data-tier="0"
-                  style={{ 
-                    width: '40px',
-                    height: '40px',
-                    objectFit: 'contain'
-                  }}
-                  onError={(e) => {
-                    const tier = parseInt(e.target.dataset.tier || '0')
-                    const next = getFaviconUrl(site.url, tier + 1)
-                    if (next) {
-                      e.target.dataset.tier = String(tier + 1)
-                      e.target.src = next
-                    } else {
-                      e.target.src = FAVICON_SVG
-                    }
-                  }}
-                />
+                <FaviconImg key={site.url} url={site.url} />
               </div>
               <a 
                 href={site.url} 
