@@ -90,7 +90,8 @@ App.jsx 是唯一的状态持有者，所有子组件通过 props 接收回调�
 | `wallpaper` | `string|null` | 壁纸 URL，null 时显示渐变背景 |
 | `selectedSites` | `[]` | 编辑模式下选中的站点 ID 列表 |
 | `categories` | `[]` (useMemo) | 从 sites 派生，无需 setState |
-| `activeCategory` | `string` | 当前选中的分类标签（空 = 显示全部） |
+| `activeCategory` | `null\|string` | 当前选中的分类标签（null = 默认首个分类，'' = 显示全部） |
+| `effectiveCategory` | `string` (派生) | 实际生效的分类：`activeCategory !== null ? activeCategory : categories[0]` |
 | `editMode` | `boolean` | 是否处于编辑模式 |
 | `showAddForm` / `showImportForm` / `showPasswordForm` / `showAddCategoryForm` / `showEditForm` | `boolean` | 各模态弹窗显隐 |
 | `password` / `passwordError` | `string` | 密码输入和错误提示 |
@@ -313,3 +314,13 @@ body 含 `{ browserTitle, headerTitle }`，写入 KV `app_settings` 键并返回
 - **`src/components/EditTitleForm.jsx`（新建）** — 编辑标题模态表单
   - 两个输入框：浏览器标签页标题、首页标题
   - 空白校验，保存回调 `onSave(browserTitle, headerTitle)`
+
+### 8. 首页默认分类修复（`src/App.jsx`）
+
+**原因**：`activeCategory` 初始值为 `''`（空字符串），过滤逻辑 `!activeCategory` 为 `true`，导致首页显示全部站点而非默认选中第一个分类。
+
+**修改**：
+- `activeCategory` 初始值从 `''` 改为 `null`（null = 未明确选择）
+- 新增派生值 `effectiveCategory = activeCategory !== null ? activeCategory : (categories[0] || '')`
+- 过滤逻辑和分类按钮高亮均改用 `effectiveCategory`
+- 新增"全部"按钮（onClick 设 `setActiveCategory('')`），允许用户手动切回全部视图
