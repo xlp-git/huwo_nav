@@ -15,9 +15,10 @@ function getFaviconUrl(url, tier) {
   try {
     const domain = new URL(url).hostname
     switch (tier) {
-      case 0: return `https://favicon.im/${domain}`
-      case 1: return `https://icons.duckduckgo.com/ip3/${domain}.ico`
-      case 2: return `https://www.google.com/s2/favicons?domain=${domain}&sz=64`
+      case 0: return `https://${domain}/favicon.ico`
+      case 1: return `https://favicon.im/${domain}`
+      case 2: return `https://icons.duckduckgo.com/ip3/${domain}.ico`
+      case 3: return `https://www.google.com/s2/favicons?domain=${domain}&sz=64`
       default: return null
     }
   } catch {
@@ -26,6 +27,7 @@ function getFaviconUrl(url, tier) {
 }
 
 const FAVICON_TIMEOUT = 5000
+const FAVICON_DIRECT_TIMEOUT = 3000
 
 function FaviconImg({ url }) {
   const [tier, setTier] = useState(0)
@@ -39,15 +41,15 @@ function FaviconImg({ url }) {
 
   useEffect(() => {
     clearTimeout(timerRef.current)
-    if (tier < 3) {
+    if (tier < 4) {
       timerRef.current = setTimeout(() => {
         if (mountedRef.current) setTier(t => t + 1)
-      }, FAVICON_TIMEOUT)
+      }, tier === 0 ? FAVICON_DIRECT_TIMEOUT : FAVICON_TIMEOUT)
     }
     return () => clearTimeout(timerRef.current)
   }, [tier, url])
 
-  const src = tier < 3 ? (getFaviconUrl(url, tier) || FAVICON_SVG) : FAVICON_SVG
+  const src = tier < 4 ? (getFaviconUrl(url, tier) || FAVICON_SVG) : FAVICON_SVG
 
   return (
     <img
