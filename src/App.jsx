@@ -9,14 +9,14 @@ import { getSites, addSite, updateSite, deleteSites, addCategory, getSettings, u
 const WALLPAPER_URL = 'https://api.xsot.cn/bing?jump=true'
 const WALLPAPER_TIMEOUT = 6000
 
-const FAVICON_SVG = 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2240%22 height=%2240%22 viewBox=%220 0 40 40%22 fill=%22none%22%3E%3Crect width=%2240%22 height=%2240%22 rx=%228%22 fill=%22%23f3f4f6%22/%3E%3Cpath d=%22M10 20H30%22 stroke=%22%239ca3af%22 stroke-width=%222%22 stroke-linecap=%22round%22/%3E%3Cpath d=%22M20 10V30%22 stroke=%22%239ca3af%22 stroke-width=%222%22 stroke-linecap=%22round%22/%3E%3C/svg%3E'
+const FAVICON_SVG = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0MCIgaGVpZ2h0PSI0MCIgdmlld0JveD0iMCAwIDQwIDQwIiBmaWxsPSJub25lIj48cmVjdCB3aWR0aD0iNDAiIGhlaWdodD0iNDAiIHJ4PSI4IiBmaWxsPSIjZjNmNGY2Ii8+PHBhdGggZD0iTTEwIDIwSDMwIiBzdHJva2U9IiM5Y2EzYWYiIHN0cm9rZS13aWR0aD0iMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+PHBhdGggZD0iTTIwIDEwVjMwIiBzdHJva2U9IiM5Y2EzYWYiIHN0cm9rZS13aWR0aD0iMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+PC9zdmc+'
 
 function getFaviconUrl(url, tier) {
   try {
     const domain = new URL(url).hostname
     switch (tier) {
-      case 0: return `https://favicon.im/${domain}`
-      case 1: return `https://www.google.com/s2/favicons?domain=${domain}&sz=64`
+      case 0: return `https://www.google.com/s2/favicons?domain=${domain}&sz=64`
+      case 1: return `https://favicon.im/${domain}`
       default: return null
     }
   } catch {
