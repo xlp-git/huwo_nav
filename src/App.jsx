@@ -1,16 +1,89 @@
-import { useState, useEffect } from 'react'
+import { useState, useMemo, useEffect, useRef } from 'react'
 import './App.css'
 import AddSiteForm from './components/AddSiteForm'
 import ImportBookmarks from './components/ImportBookmarks'
 import EditSiteForm from './components/EditSiteForm'
+import EditTitleForm from './components/EditTitleForm'
+import { getSites, addSite, updateSite, deleteSites, addCategory, getSettings, updateSettings } from './storage'
+
+const WALLPAPER_URL = 'https://api.xsot.cn/bing?jump=true'
+const WALLPAPER_TIMEOUT = 6000
+
+const FAVICON_SVG = 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2240%22 height=%2240%22 viewBox=%220 0 40 40%22 fill=%22none%22%3E%3Crect width=%2240%22 height=%2240%22 rx=%228%22 fill=%22%23f3f4f6%22/%3E%3Cpath d=%22M10 20H30%22 stroke=%22%239ca3af%22 stroke-width=%222%22 stroke-linecap=%22round%22/%3E%3Cpath d=%22M20 10V30%22 stroke=%22%239ca3af%22 stroke-width=%222%22 stroke-linecap=%22round%22/%3E%3C/svg%3E'
+
+function getFaviconUrl(url, tier) {
+  try {
+    const domain = new URL(url).hostname
+    switch (tier) {
+      case 0: return `https://favicon.im/${domain}`
+      case 1: return `https://www.google.com/s2/favicons?domain=${domain}&sz=64`
+      default: return null
+    }
+  } catch {
+    return null
+  }
+}
 
 function App() {
   const [sites, setSites] = useState([])
   const [selectedSites, setSelectedSites] = useState([])
+  const [wallpaper, setWallpaper] = useState(null)
+  const [browserTitle, setBrowserTitle] = useState('小鹏导航')
+  const [headerTitle, setHeaderTitle] = useState('我的个人网址导航')
+  const [showEditTitleForm, setShowEditTitleForm] = useState(false)
+
+  useEffect(() => {
+    getSites().then(setSites)
+    getSettings().then(s => {
+      setBrowserTitle(s.browserTitle)
+      setHeaderTitle(s.headerTitle)
+    })
+  }, [])
+
+  useEffect(() => {
+    document.title = browserTitle
+  }, [browserTitle])
+
+  // 壁纸加载（自动重试）
+  const retryRef = useRef(null)
+
+  useEffect(() => {
+    let cancelled = false
+
+    function loadWallpaper() {
+      if (cancelled) return
+      const img = new Image()
+      const timeout = setTimeout(() => {
+        if (!cancelled) {
+          retryRef.current = setTimeout(loadWallpaper, 10000)
+        }
+      }, WALLPAPER_TIMEOUT)
+
+      img.onload = () => {
+        clearTimeout(timeout)
+        if (!cancelled) setWallpaper(img.src)
+      }
+      img.onerror = () => {
+        clearTimeout(timeout)
+        if (!cancelled) retryRef.current = setTimeout(loadWallpaper, 10000)
+      }
+      img.src = `${WALLPAPER_URL}&t=${Date.now()}`
+    }
+
+    loadWallpaper()
+
+    return () => {
+      cancelled = true
+      clearTimeout(retryRef.current)
+    }
+  }, [])
   const [showAddForm, setShowAddForm] = useState(false)
   const [showImportForm, setShowImportForm] = useState(false)
   const [showPasswordForm, setShowPasswordForm] = useState(false)
-  const [categories, setCategories] = useState([])
+  const categories = useMemo(
+    () => [...new Set(sites.map(site => site.category).filter(Boolean))],
+    [sites]
+  )
   const [activeCategory, setActiveCategory] = useState('')
   const [editMode, setEditMode] = useState(false)
   const [password, setPassword] = useState('')
@@ -20,22 +93,6 @@ function App() {
   const [editingSite, setEditingSite] = useState(null)
   const [showEditForm, setShowEditForm] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
-  const [timestamp, setTimestamp] = useState(Date.now())
-
-  // 获取站点数据
-  useEffect(() => {
-    fetchSites()
-  }, [])
-
-  // 提取分类
-  useEffect(() => {
-    const uniqueCategories = [...new Set(sites.map(site => site.category).filter(Boolean))]
-    setCategories(uniqueCategories)
-    // 如果有分类且没有选中分类，默认选中第一个
-    if (uniqueCategories.length > 0 && !activeCategory) {
-      setActiveCategory(uniqueCategories[0])
-    }
-  }, [sites, activeCategory])
 
   // 过滤当前分类的站点
   const filteredSites = sites.filter(site => {
@@ -46,31 +103,6 @@ function App() {
     
     return categoryMatch && searchMatch
   })
-
-  // 获取所有站点
-  const fetchSites = async () => {
-    try {
-      const response = await fetch('/api/sites')
-      
-      // 检查响应状态
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`)
-      }
-      
-      // 检查响应类型
-      const contentType = response.headers.get('content-type')
-      if (!contentType || !contentType.includes('application/json')) {
-        throw new Error('Response is not JSON')
-      }
-      
-      const data = await response.json()
-      setSites(data)
-    } catch (error) {
-      console.error('Error fetching sites:', error)
-      // API 请求失败时使用空数据
-      setSites([])
-    }
-  }
 
   // 处理站点选择
   const handleSiteSelect = (id) => {
@@ -86,36 +118,22 @@ function App() {
   // 处理批量删除
   const handleBatchDelete = async () => {
     if (selectedSites.length === 0) return
-
-    try {
-      await fetch('/api/sites', {
-        method: 'DELETE',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ ids: selectedSites })
-      })
-      setSites(prev => prev.filter(site => !selectedSites.includes(site.id)))
-      setSelectedSites([])
-    } catch (error) {
-      console.error('Error deleting sites:', error)
-      // 本地开发时模拟删除
-      setSites(prev => prev.filter(site => !selectedSites.includes(site.id)))
-      setSelectedSites([])
-    }
+    const remaining = await deleteSites(selectedSites)
+    setSites(remaining)
+    setSelectedSites([])
   }
 
   // 处理添加站点
-  const handleAddSite = (newSite) => {
-    setSites(prev => [...prev, newSite])
+  const handleAddSite = async (newSite) => {
+    const created = await addSite(newSite)
+    setSites(prev => [...prev, created])
     setShowAddForm(false)
   }
 
   // 处理导入完成
-  const handleImportComplete = (importedCount) => {
-    // 重新加载数据，确保本地存储中的数据被正确显示
-    const localData = localStorage.getItem('nav_sites')
-    setSites(localData ? JSON.parse(localData) : [])
+  const handleImportComplete = async () => {
+    const data = await getSites()
+    setSites(data)
     setShowImportForm(false)
   }
 
@@ -135,35 +153,18 @@ function App() {
   // 处理添加分类
   const handleAddCategory = async (categoryName) => {
     if (!categoryName || categoryName.trim() === '') return
-
-    try {
-      if (categories.includes(categoryName.trim())) {
-        alert('分类已存在')
-        return
-      }
-
-      const response = await fetch('/api/sites', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ category: categoryName.trim() })
-      })
-
-      if (!response.ok) {
-        throw new Error('添加分类失败')
-      }
-
-      const updatedSites = await response.json()
-      setSites(updatedSites)
-      setNewCategory('')
-      setShowAddCategoryForm(false)
-    } catch (error) {
-      console.error('Error adding category:', error)
-      alert('分类添加成功（本地模拟）')
-      setNewCategory('')
-      setShowAddCategoryForm(false)
+    if (categories.includes(categoryName.trim())) {
+      alert('分类已存在')
+      return
     }
+    const result = await addCategory(categoryName.trim())
+    if (result.error) {
+      alert(result.error)
+      return
+    }
+    setSites(result.sites)
+    setNewCategory('')
+    setShowAddCategoryForm(false)
   }
 
   // 处理编辑网站
@@ -174,60 +175,44 @@ function App() {
 
   // 处理更新网站
   const handleUpdateSite = async (updatedSite) => {
-    try {
-      // 发送请求到 API 更新网站
-      const response = await fetch('/api/sites', {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(updatedSite)
-      })
-
-      if (!response.ok) {
-        throw new Error('更新网站失败')
-      }
-
-      // 刷新网站列表
-      const updatedSites = await response.json()
-      setSites(updatedSites)
-      setEditingSite(null)
-      setShowEditForm(false)
-    } catch (error) {
-      console.error('Error updating site:', error)
-      // 本地开发时模拟更新网站
-      setSites(prev => prev.map(site => site.id === updatedSite.id ? updatedSite : site))
-      setEditingSite(null)
-      setShowEditForm(false)
-      alert('网站更新成功（本地模拟）')
+    const result = await updateSite(updatedSite)
+    if (result) {
+      setSites(result)
     }
+    setEditingSite(null)
+    setShowEditForm(false)
   }
 
   return (
-    <div style={{ 
-      minHeight: '100vh', 
-      backgroundColor: '#1a1a2e',
-      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-      backgroundImage: `url(https://api.xsot.cn/bing?jump=true&t=${timestamp})`,
-      backgroundSize: 'cover',
-      backgroundPosition: 'center',
-      backgroundRepeat: 'no-repeat',
-      backgroundAttachment: 'fixed',
-      transition: 'background 0.5s ease'
-    }}>
-      {/* 顶部导航栏 */}
-      <header style={{ 
-        backgroundColor: 'rgba(255, 255, 255, 0.9)',
-        boxShadow: '0 1px 2px 0 rgba(0, 0, 0, 0.05)',
-        backdropFilter: 'blur(10px)'
+    <>
+      {/* 全屏背景层 */}
+      <div style={{
+        position: 'fixed',
+        inset: 0,
+        zIndex: -1,
+        background: wallpaper
+          ? `linear-gradient(rgba(26,26,46,0.3), rgba(26,26,46,0.5)), url(${wallpaper}) center/cover no-repeat`
+          : 'linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%)',
+        transition: 'background 0.8s ease'
+      }} />
+      {/* 内容层 */}
+      <div style={{
+        minHeight: '100vh',
+        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
       }}>
-        <div style={{ 
+      {/* 顶部导航栏 */}
+      <header>
+        <div style={{
           maxWidth: '1280px',
-          margin: '0 auto',
+          margin: '16px auto 0',
           padding: '16px',
           display: 'flex',
           flexDirection: 'column',
-          gap: '16px'
+          gap: '16px',
+          backgroundColor: 'rgba(255, 255, 255, 0.06)',
+          backdropFilter: 'blur(12px)',
+          borderRadius: '8px',
+          overflow: 'hidden'
         }}>
           <div style={{ 
             display: 'flex',
@@ -238,7 +223,7 @@ function App() {
               fontSize: '24px',
               fontWeight: 'bold',
               color: '#111827'
-            }}>我的个人网址导航</h1>
+            }}>{headerTitle}</h1>
             {editMode ? (
               <button 
                 onClick={() => setEditMode(false)}
@@ -382,6 +367,25 @@ function App() {
               >
                 添加分类
               </button>
+              <button
+                onClick={() => setShowEditTitleForm(true)}
+                style={{
+                  padding: '8px 16px',
+                  backgroundColor: '#f59e0b',
+                  color: 'white',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  border: 'none'
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = '#d97706'
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = '#f59e0b'
+                }}
+              >
+                编辑标题
+              </button>
               {filteredSites.length > 0 && (
                 <button 
                   onClick={() => {
@@ -436,16 +440,17 @@ function App() {
       </header>
 
       {/* 分类导航 */}
-      <div style={{ 
+      <div style={{
         maxWidth: '1280px',
-        margin: '0 auto',
+        margin: '16px auto 0',
         padding: '16px',
         display: 'flex',
         flexWrap: 'wrap',
         gap: '8px',
-        borderBottom: '1px solid #e5e7eb',
-        backgroundColor: 'rgba(255, 255, 255, 0.9)',
-        backdropFilter: 'blur(10px)'
+        backgroundColor: 'rgba(255, 255, 255, 0.06)',
+        backdropFilter: 'blur(12px)',
+        borderRadius: '8px',
+        overflow: 'hidden'
       }}>
         {categories.map(category => (
           <button
@@ -453,12 +458,12 @@ function App() {
             onClick={() => setActiveCategory(category)}
             style={{ 
               padding: '8px 16px',
-              borderRadius: '6px 6px 0 0',
+              borderRadius: '8px',
               backgroundColor: activeCategory === category ? '#2563eb' : 'white',
               color: activeCategory === category ? 'white' : '#4b5563',
               cursor: 'pointer',
               border: activeCategory === category ? '1px solid #2563eb' : '1px solid #e5e7eb',
-              borderBottom: activeCategory === category ? '1px solid #2563eb' : '1px solid #e5e7eb'
+              overflow: 'hidden'
             }}
             onMouseEnter={(e) => {
               if (activeCategory !== category) {
@@ -481,9 +486,10 @@ function App() {
         maxWidth: '1280px',
         margin: '20px auto',
         padding: '24px 16px',
-        backgroundColor: 'rgba(255, 255, 255, 0.9)',
-        backdropFilter: 'blur(10px)',
-        borderRadius: '8px'
+        backgroundColor: 'rgba(255, 255, 255, 0.06)',
+        backdropFilter: 'blur(12px)',
+        borderRadius: '8px',
+        overflow: 'hidden'
       }}>
         {/* 分类标题 */}
         {activeCategory && (
@@ -514,7 +520,8 @@ function App() {
                 boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
                 transition: 'all 0.2s',
                 border: selectedSites.includes(site.id) ? '2px solid #2563eb' : 'none',
-                cursor: editMode ? 'pointer' : 'default'
+                cursor: editMode ? 'pointer' : 'default',
+                overflow: 'hidden'
               }}
               onMouseEnter={(e) => {
                 e.currentTarget.style.boxShadow = '0 4px 6px rgba(0,0,0,0.1)'
@@ -538,15 +545,23 @@ function App() {
                 backgroundColor: '#f3f4f6'
               }}>
                 <img 
-                  src={`https://favicon.im/zh/${site.url}`} 
-                  alt={`${site.name} icon`} 
+                  src={getFaviconUrl(site.url, 0)}
+                  alt={`${site.name} icon`}
+                  data-tier="0"
                   style={{ 
                     width: '40px',
                     height: '40px',
                     objectFit: 'contain'
                   }}
                   onError={(e) => {
-                    e.target.src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40" fill="none"%3E%3Crect width="40" height="40" rx="8" fill="%23f3f4f6"/%3E%3Cpath d="M10 20H30" stroke="%239ca3af" strokeWidth="2" strokeLinecap="round"/%3E%3Cpath d="M20 10V30" stroke="%239ca3af" strokeWidth="2" strokeLinecap="round"/%3E%3C/svg%3E'
+                    const tier = parseInt(e.target.dataset.tier || '0')
+                    const next = getFaviconUrl(site.url, tier + 1)
+                    if (next) {
+                      e.target.dataset.tier = String(tier + 1)
+                      e.target.src = next
+                    } else {
+                      e.target.src = FAVICON_SVG
+                    }
                   }}
                 />
               </div>
@@ -818,6 +833,21 @@ function App() {
         </div>
       )}
 
+      {/* 编辑标题表单 */}
+      {showEditTitleForm && (
+        <EditTitleForm
+          browserTitle={browserTitle}
+          headerTitle={headerTitle}
+          onSave={async (bt, ht) => {
+            const s = await updateSettings({ browserTitle: bt, headerTitle: ht })
+            setBrowserTitle(s.browserTitle)
+            setHeaderTitle(s.headerTitle)
+            setShowEditTitleForm(false)
+          }}
+          onCancel={() => setShowEditTitleForm(false)}
+        />
+      )}
+
       {/* 编辑网站表单 */}
       {showEditForm && editingSite && (
         <div style={{
@@ -888,6 +918,7 @@ function App() {
         </div>
       )}
     </div>
+    </>
   )
 }
 

@@ -14,55 +14,18 @@ const AddSiteForm = ({ onAdd, onCancel, categories }) => {
     setFormData(prev => ({ ...prev, [name]: value }))
   }
 
-  const handleSubmit = async (e) => {
+  const handleSubmit = (e) => {
     e.preventDefault()
     setError('')
 
-    // 表单验证
     if (!formData.name || !formData.url) {
       setError('请填写站点名称和 URL')
       return
     }
 
-    // 确保 URL 格式正确
-    let url = formData.url
-    if (!url.startsWith('http://') && !url.startsWith('https://')) {
-      url = 'https://' + url
-    }
-
     setLoading(true)
-
-    try {
-      const response = await fetch('/api/sites', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          ...formData,
-          url
-        })
-      })
-
-      if (!response.ok) {
-        throw new Error('添加失败')
-      }
-
-      const newSite = await response.json()
-      onAdd(newSite)
-    } catch (error) {
-      console.error('Error adding site:', error)
-      // 本地开发时模拟添加
-      const newSite = {
-        id: Date.now().toString(),
-        ...formData,
-        url,
-        createdAt: new Date().toISOString()
-      }
-      onAdd(newSite)
-    } finally {
-      setLoading(false)
-    }
+    onAdd(formData)
+    setLoading(false)
   }
 
   return (

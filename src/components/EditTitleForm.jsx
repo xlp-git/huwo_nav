@@ -1,44 +1,17 @@
 import React, { useState } from 'react'
-import { importBookmarks } from '../storage'
 
-const ImportBookmarks = ({ onComplete, onCancel }) => {
-  const [file, setFile] = useState(null)
+const EditTitleForm = ({ browserTitle, headerTitle, onSave, onCancel }) => {
+  const [bt, setBt] = useState(browserTitle)
+  const [ht, setHt] = useState(headerTitle)
   const [error, setError] = useState('')
-  const [loading, setLoading] = useState(false)
 
-  const handleFileChange = (e) => {
-    const selectedFile = e.target.files[0]
-    if (selectedFile) {
-      if (selectedFile.type === 'text/html' || selectedFile.name.endsWith('.html')) {
-        setFile(selectedFile)
-        setError('')
-      } else {
-        setError('请上传 HTML 格式的收藏夹文件')
-        setFile(null)
-      }
-    }
-  }
-
-  const handleSubmit = async (e) => {
+  const handleSubmit = (e) => {
     e.preventDefault()
-    setError('')
-
-    if (!file) {
-      setError('请选择收藏夹文件')
+    if (!bt.trim() || !ht.trim()) {
+      setError('标题不能为空')
       return
     }
-
-    setLoading(true)
-
-    try {
-      const result = await importBookmarks(file)
-      onComplete(result.count)
-    } catch (err) {
-      console.error('Error importing bookmarks:', err)
-      setError('导入失败，请重试')
-    } finally {
-      setLoading(false)
-    }
+    onSave(bt.trim(), ht.trim())
   }
 
   return (
@@ -73,8 +46,8 @@ const ImportBookmarks = ({ onComplete, onCancel }) => {
             fontSize: '20px',
             fontWeight: 'bold',
             color: '#111827'
-          }}>导入收藏夹</h2>
-          <button 
+          }}>编辑标题</h2>
+          <button
             onClick={onCancel}
             style={{
               color: '#6b7280',
@@ -115,12 +88,12 @@ const ImportBookmarks = ({ onComplete, onCancel }) => {
               color: '#4b5563',
               marginBottom: '4px'
             }}>
-              选择收藏夹文件
+              浏览器标签页标题
             </label>
             <input
-              type="file"
-              accept=".html"
-              onChange={handleFileChange}
+              type="text"
+              value={bt}
+              onChange={(e) => setBt(e.target.value)}
               style={{
                 width: '100%',
                 padding: '8px 12px',
@@ -138,31 +111,40 @@ const ImportBookmarks = ({ onComplete, onCancel }) => {
               }}
               required
             />
-            <p style={{
-              fontSize: '12px',
-              color: '#6b7280',
-              marginTop: '4px'
-            }}>
-              请上传浏览器导出的 HTML 格式收藏夹文件
-            </p>
           </div>
 
-          {file && (
-            <div style={{
-              backgroundColor: '#f3f4f6',
-              padding: '8px',
-              borderRadius: '6px',
-              marginBottom: '16px'
+          <div style={{ marginBottom: '16px' }}>
+            <label style={{
+              display: 'block',
+              fontSize: '14px',
+              fontWeight: '500',
+              color: '#4b5563',
+              marginBottom: '4px'
             }}>
-              <p style={{
-                fontSize: '14px',
-                color: '#4b5563',
-                margin: 0
-              }}>
-                已选择：{file.name}
-              </p>
-            </div>
-          )}
+              首页标题
+            </label>
+            <input
+              type="text"
+              value={ht}
+              onChange={(e) => setHt(e.target.value)}
+              style={{
+                width: '100%',
+                padding: '8px 12px',
+                border: '1px solid #d1d5db',
+                borderRadius: '6px',
+                outline: 'none'
+              }}
+              onFocus={(e) => {
+                e.currentTarget.style.borderColor = '#2563eb'
+                e.currentTarget.style.boxShadow = '0 0 0 3px rgba(37, 99, 235, 0.1)'
+              }}
+              onBlur={(e) => {
+                e.currentTarget.style.borderColor = '#d1d5db'
+                e.currentTarget.style.boxShadow = 'none'
+              }}
+              required
+            />
+          </div>
 
           <div style={{
             display: 'flex',
@@ -192,29 +174,23 @@ const ImportBookmarks = ({ onComplete, onCancel }) => {
             </button>
             <button
               type="submit"
-              disabled={loading || !file}
               style={{
                 flex: 1,
                 padding: '8px 16px',
-                backgroundColor: '#16a34a',
+                backgroundColor: '#2563eb',
                 color: 'white',
                 borderRadius: '6px',
                 cursor: 'pointer',
-                border: 'none',
-                opacity: (loading || !file) ? 0.5 : 1
+                border: 'none'
               }}
               onMouseEnter={(e) => {
-                if (!loading && file) {
-                  e.currentTarget.style.backgroundColor = '#15803d'
-                }
+                e.currentTarget.style.backgroundColor = '#1d4ed8'
               }}
               onMouseLeave={(e) => {
-                if (!loading && file) {
-                  e.currentTarget.style.backgroundColor = '#16a34a'
-                }
+                e.currentTarget.style.backgroundColor = '#2563eb'
               }}
             >
-              {loading ? '导入中...' : '导入'}
+              保存
             </button>
           </div>
         </form>
@@ -223,4 +199,4 @@ const ImportBookmarks = ({ onComplete, onCancel }) => {
   )
 }
 
-export default ImportBookmarks
+export default EditTitleForm
