@@ -9,14 +9,15 @@ import { getSites, addSite, updateSite, deleteSites, addCategory, getSettings, u
 const WALLPAPER_URL = 'https://api.xsot.cn/bing?jump=true'
 const WALLPAPER_TIMEOUT = 6000
 
-const FAVICON_SVG = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0MCIgaGVpZ2h0PSI0MCIgdmlld0JveD0iMCAwIDQwIDQwIiBmaWxsPSJub25lIj48cmVjdCB3aWR0aD0iNDAiIGhlaWdodD0iNDAiIHJ4PSI4IiBmaWxsPSIjZjNmNGY2Ii8+PHBhdGggZD0iTTEwIDIwSDMwIiBzdHJva2U9IiM5Y2EzYWYiIHN0cm9rZS13aWR0aD0iMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+PHBhdGggZD0iTTIwIDEwVjMwIiBzdHJva2U9IiM5Y2EzYWYiIHN0cm9rZS13aWR0aD0iMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+PC9zdmc+'
+const FAVICON_SVG = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0MCIgaGVpZ2h0PSI0MCIgdmlld0JveD0iMCAwIDQwIDQwIiBmaWxsPSJub25lIj48Y2lyY2xlIGN4PSIyMCIgY3k9IjIwIiByPSIxNiIgc3Ryb2tlPSIjOWNhM2FmIiBzdHJva2Utd2lkdGg9IjIiLz48ZWxsaXBzZSBjeD0iMjAiIGN5PSIyMCIgcng9IjgiIHJ5PSIxNiIgc3Ryb2tlPSIjOWNhM2FmIiBzdHJva2Utd2lkdGg9IjIiLz48cGF0aCBkPSJNNCAyMGgzMiIgc3Ryb2tlPSIjOWNhM2FmIiBzdHJva2Utd2lkdGg9IjIiLz48cGF0aCBkPSJNMjAgNGEyNCAxNiAwIDAgMCAwIDMyIiBzdHJva2U9IiM5Y2EzYWYiIHN0cm9rZS13aWR0aD0iMiIvPjxwYXRoIGQ9Ik0yMCA0YTI0IDE2IDAgMCAxIDAgMzIiIHN0cm9rZT0iIzljYTNhZiIgc3Ryb2tlLXdpZHRoPSIyIi8+PC9zdmc+'
 
 function getFaviconUrl(url, tier) {
   try {
     const domain = new URL(url).hostname
     switch (tier) {
       case 0: return `https://favicon.im/${domain}`
-      case 1: return `https://www.google.com/s2/favicons?domain=${domain}&sz=64`
+      case 1: return `https://icons.duckduckgo.com/ip3/${domain}.ico`
+      case 2: return `https://www.google.com/s2/favicons?domain=${domain}&sz=64`
       default: return null
     }
   } catch {
@@ -38,7 +39,7 @@ function FaviconImg({ url }) {
 
   useEffect(() => {
     clearTimeout(timerRef.current)
-    if (tier < 2) {
+    if (tier < 3) {
       timerRef.current = setTimeout(() => {
         if (mountedRef.current) setTier(t => t + 1)
       }, FAVICON_TIMEOUT)
@@ -46,7 +47,7 @@ function FaviconImg({ url }) {
     return () => clearTimeout(timerRef.current)
   }, [tier, url])
 
-  const src = tier < 2 ? (getFaviconUrl(url, tier) || FAVICON_SVG) : FAVICON_SVG
+  const src = tier < 3 ? (getFaviconUrl(url, tier) || FAVICON_SVG) : FAVICON_SVG
 
   return (
     <img
