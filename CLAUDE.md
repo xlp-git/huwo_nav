@@ -355,3 +355,9 @@ body 含 `{ browserTitle, headerTitle }`，写入 KV `app_settings` 键并返回
 **原因**："搜索"按钮实际是清空搜索词的操作，标签有误导。
 
 **修改**：按钮标签从"搜索"改为"清除"。
+
+### 12. favicon.im 移动端兼容（`src/App.jsx`，2026-05-26）
+
+**原因**：`https://favicon.im/${domain}` 在手机端无法访问，`https://favicon.im/zh/${domain}` 两端均可。
+
+**修改**：FaviconImg 回退 URL 改为 `https://favicon.im/zh/${domain}`。

@@ -34,7 +34,7 @@ function FaviconImg({ url }) {
 
     const urls = [
       `https://${domain}/favicon.ico`,
-      `https://favicon.im/${domain}`,
+      `https://favicon.im/zh/${domain}`,
     ]
 
     async function tryLoad() {
