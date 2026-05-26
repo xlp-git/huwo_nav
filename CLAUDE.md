@@ -337,12 +337,15 @@ body 含 `{ browserTitle, headerTitle }`，写入 KV `app_settings` 键并返回
 
 ### 10. 分类记录功能（`src/App.jsx` + `src/storage.js` + `functions/api/settings.js`，2026-05-26）
 
-**原因**：用户希望在切换分类后，刷新页面能恢复到上次查看的分类，但需要一个开关控制是否启用。
+**原因**：用户希望在切换分类后，刷新页面能恢复到上次查看的分类，但需要开关控制是否记录（而非控制是否恢复）。
 
 **修改**：
 - settings 新增 `rememberCategory`（bool）和 `savedCategory`（string），默认值 `false` / `''`
-- 编辑工具栏新增"记录分类"开关按钮（绿色开/灰色关），toggle 时保存 settings
-- `handleCategoryChange(category)` 统一处理分类切换：切换时若开关打开则保存
-- 初始化 `useEffect` 同时等待 sites 和 settings 就绪：当 `activeCategory === null` 且 `rememberCategory` 为 true 且 `savedCategory` 存在于分类列表时，恢复分类
+- 编辑工具栏新增"记录分类"开关按钮（绿色开/灰色关）
+- **开关开**：切换分类时自动保存 `savedCategory`；**开关关**：不记录，但保留已有记录
+- **页面加载**：只要有有效 `savedCategory`（非空且分类存在），无论开关状态都恢复
+- `handleCategoryChange(category)` 统一处理分类切换
+- 初始化 `useEffect` 条件：`categories.length > 0 && activeCategory === null && savedCategory && categories.includes(savedCategory)`
   - 不用 ref 防重入，改用 `activeCategory === null` 条件 —— 解决 sites/settings 异步加载顺序不确定导致的竞态
+  - 不依赖 `rememberCategory` —— 恢复与开关状态解耦
 - `EditTitleForm` 保存时保留 `rememberCategory` 和 `savedCategory` 字段
