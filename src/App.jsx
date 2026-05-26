@@ -193,7 +193,7 @@ function App() {
 
   // 过滤当前分类的站点
   const filteredSites = sites.filter(site => {
-    const categoryMatch = searchTerm ? true : (!effectiveCategory || site.category === effectiveCategory)
+    const categoryMatch = !effectiveCategory || site.category === effectiveCategory
     const searchMatch = !searchTerm || 
                        site.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
                        site.url.toLowerCase().includes(searchTerm.toLowerCase())

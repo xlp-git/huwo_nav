@@ -350,10 +350,8 @@ body 含 `{ browserTitle, headerTitle }`，写入 KV `app_settings` 键并返回
   - 不依赖 `rememberCategory` —— 恢复与开关状态解耦
 - `EditTitleForm` 保存时保留 `rememberCategory` 和 `savedCategory` 字段
 
-### 11. 搜索跨分类匹配 + 按钮标签修正（`src/App.jsx`，2026-05-26）
+### 11. 搜索按钮标签修正（`src/App.jsx`，2026-05-26）
 
-**原因**：搜索时 `categoryMatch` 仍限制在当前分类，导致其他分类的站点搜不到；"搜索"按钮实际是清空操作，标签有误导。
+**原因**："搜索"按钮实际是清空搜索词的操作，标签有误导。
 
-**修改**：
-- `categoryMatch` 逻辑改为 `searchTerm ? true : (!effectiveCategory || site.category === effectiveCategory)` — 有搜索词时跨全部分类
-- 按钮标签从"搜索"改为"清除"
+**修改**：按钮标签从"搜索"改为"清除"。
