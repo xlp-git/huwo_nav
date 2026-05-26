@@ -185,7 +185,7 @@ body 含 `{ browserTitle, headerTitle }`，写入 KV `app_settings` 键并返回
 - **搜索**：搜索词匹配 `site.name` 或 `site.url`（大小写不敏感），可与分类过滤叠加
 - **全选逻辑**：点击"全选"选中当前 `filteredSites` 所有站点；已全选时变为"取消全选"
 - **收藏夹导入**：上传浏览器导出的 Netscape HTML 格式文件，客户端正则解析（storage.js `parseBookmarkHtml`），API 可用时优先走 API 导入
-- **Favicon 获取**：`FaviconImg` 三态组件（loading/loaded/fallback）— 加载中显示旋转动画 → `new Image()` 预加载 `/favicon.ico` → 失败则 `favicon.im` → 全部失败显示圆形地球 SVG → 后台 API 尝试更精确地址
+- **Favicon 获取**：`FaviconImg` 三态组件（loading/loaded/fallback）— 加载中显示旋转动画 → `new Image()` 预加载 `favicon.im/zh/` → 失败则显示圆形地球 SVG
 - **背景壁纸**：通过 `new Image()` 预加载 `api.xsot.cn/bing`，6 秒超时，失败/超时后每 10 秒自动重试，加载成功后停止。未加载时显示三色渐变背景
 - **全屏背景层**：独立 `<div>` 使用 `position: fixed; inset: 0; z-index: -1`，内容层与背景分离
 - **毛玻璃效果**：三个内容区块使用 `backdropFilter: blur(12px)` + `rgba(255,255,255,0.06)` + `borderRadius: 8px` + `overflow: hidden`（防止圆角锯齿）
@@ -356,8 +356,8 @@ body 含 `{ browserTitle, headerTitle }`，写入 KV `app_settings` 键并返回
 
 **修改**：按钮标签从"搜索"改为"清除"。
 
-### 12. favicon.im 移动端兼容（`src/App.jsx`，2026-05-26）
+### 12. Favicon 获取精简（`src/App.jsx`，2026-05-26）
 
-**原因**：`https://favicon.im/${domain}` 在手机端无法访问，`https://favicon.im/zh/${domain}` 两端均可。
+**原因**：多级回退（`/favicon.ico` → `favicon.im` → 后台 API）链路复杂，且 `favicon.im/zh/` 已足够稳定。
 
-**修改**：FaviconImg 回退 URL 改为 `https://favicon.im/zh/${domain}`。
+**修改**：简化为仅 `https://favicon.im/zh/${domain}` 单一来源，失败直接显示 SVG 占位符。移除 `/favicon.ico` 直连和后台 API 预加载逻辑。

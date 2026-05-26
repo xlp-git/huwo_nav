@@ -14,7 +14,6 @@ const FAVICON_SVG = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53M
 function FaviconImg({ url }) {
   const [state, setState] = useState('loading')
   const [src, setSrc] = useState(null)
-  const domainRef = useRef(null)
   const cancelledRef = useRef(false)
 
   useEffect(() => {
@@ -25,47 +24,24 @@ function FaviconImg({ url }) {
     let domain
     try {
       domain = new URL(url).hostname
-      domainRef.current = domain
     } catch {
       setSrc(FAVICON_SVG)
       setState('fallback')
       return
     }
 
-    const urls = [
-      `https://${domain}/favicon.ico`,
-      `https://favicon.im/zh/${domain}`,
-    ]
+    const faviconUrl = `https://favicon.im/zh/${domain}`
 
     async function tryLoad() {
-      for (let i = 0; i < urls.length; i++) {
-        if (cancelledRef.current) return
-        const ok = await preload(urls[i])
-        if (cancelledRef.current) return
-        if (ok) {
-          setSrc(urls[i])
-          setState('loaded')
-          tryBetterUrl(domain, urls[0])
-          return
-        }
-      }
-      if (!cancelledRef.current) {
+      const ok = await preload(faviconUrl)
+      if (cancelledRef.current) return
+      if (ok) {
+        setSrc(faviconUrl)
+        setState('loaded')
+      } else {
         setSrc(FAVICON_SVG)
         setState('fallback')
       }
-    }
-
-    async function tryBetterUrl(domain, currentUrl) {
-      try {
-        const resp = await fetch(`/api/favicon?domain=${domain}`)
-        if (!resp.ok || cancelledRef.current) return
-        const { url: resolved } = await resp.json()
-        if (cancelledRef.current || resolved === currentUrl) return
-        const ok = await preload(resolved)
-        if (ok && !cancelledRef.current) {
-          setSrc(resolved)
-        }
-      } catch {}
     }
 
     tryLoad()
