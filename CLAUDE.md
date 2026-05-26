@@ -185,7 +185,7 @@ body 含 `{ browserTitle, headerTitle }`，写入 KV `app_settings` 键并返回
 - **搜索**：搜索词匹配 `site.name` 或 `site.url`（大小写不敏感），可与分类过滤叠加
 - **全选逻辑**：点击"全选"选中当前 `filteredSites` 所有站点；已全选时变为"取消全选"
 - **收藏夹导入**：上传浏览器导出的 Netscape HTML 格式文件，客户端正则解析（storage.js `parseBookmarkHtml`），API 可用时优先走 API 导入
-- **Favicon 获取**：`FaviconImg` 组件 — 立即渲染 `/favicon.ico` → 后台 API 尝试获取更精确地址 → onError 级联回退 `favicon.im` → SVG 占位符（ref 追踪 tier，避免多余重渲染）
+- **Favicon 获取**：`FaviconImg` 三态组件（loading/loaded/fallback）— 加载中显示旋转动画 → `new Image()` 预加载 `/favicon.ico` → 失败则 `favicon.im` → 全部失败显示圆形地球 SVG → 后台 API 尝试更精确地址
 - **背景壁纸**：通过 `new Image()` 预加载 `api.xsot.cn/bing`，6 秒超时，失败/超时后每 10 秒自动重试，加载成功后停止。未加载时显示三色渐变背景
 - **全屏背景层**：独立 `<div>` 使用 `position: fixed; inset: 0; z-index: -1`，内容层与背景分离
 - **毛玻璃效果**：三个内容区块使用 `backdropFilter: blur(12px)` + `rgba(255,255,255,0.06)` + `borderRadius: 8px` + `overflow: hidden`（防止圆角锯齿）
@@ -322,16 +322,27 @@ body 含 `{ browserTitle, headerTitle }`，写入 KV `app_settings` 键并返回
 - 过滤逻辑和分类按钮高亮均改用 `effectiveCategory`
 - 新增"全部"按钮（onClick 设 `setActiveCategory('')`），允许用户手动切回全部视图
 
-### 9. FaviconImg 组件重写（`src/App.jsx`，2026-05-26）
+### 9. FaviconImg 组件重写（`src/App.jsx` + `src/App.css`，2026-05-26）
 
-**原因**：旧实现等待 API 返回后才渲染（返回 `null`），API 超时/失败后直接降级到 `favicon.im`，且 `onError` 用 DOM 属性 `data-tier` 追踪层级，存在竞态问题（图标先显示后回退到 SVG）。
+**原因**：旧实现等待 API 返回后才渲染（返回 `null`），`onError` 用 DOM `data-tier` 追踪层级存在竞态问题（图标先显示后回退到 SVG），无加载反馈。
 
 **修改**：
-- `FaviconImg` 从函数重写为组件，使用 `useRef` 追踪 `domain` 和 `tier`（替代 DOM `data-tier`）
-- **立即渲染**：不再等待 API，直接设置 `src` 为 `https://${domain}/favicon.ico`，零延迟展示
-- **后台优化**：`resolveBetter()` 异步请求 `/api/favicon?domain=`，仅在 `tier === 0`（未发生回退）时替换为更精确的图标地址
-- **三级回退链**（`handleError`）：
-  - tier 0 → 1：`/favicon.ico` 加载失败 → 尝试 `https://favicon.im/${domain}`
-  - tier 1 → 2：`favicon.im` 加载失败 → 使用 `FAVICON_SVG` 地球占位符
-  - tier 2：已是 SVG，不再处理
-- `cancelled` 标志防止组件卸载后的 `setSrc` 调用
+- `FaviconImg` 使用三态渲染：`loading` / `loaded` / `fallback`
+- **加载态**：显示 CSS 旋转动画（`.favicon-spinner`，28px，蓝色边框），类似浏览器标签页加载效果
+- **预加载**：`preload()` 工具函数用 `new Image()` Promise 封装，顺序尝试 `/favicon.ico` → `favicon.im`，全部失败则显示 SVG
+- **SVG 占位符**：圆形地球图标（circle 背景 r=18），弧线 rx=13 确保不超出 40x40 viewBox，不会被裁切
+- **后台优化**：加载成功后异步请求 `/api/favicon?domain=`，获取到不同地址时预加载验证后再替换
+- 尺寸 48px，容器 60px
+- `cancelledRef` 防止组件卸载后的 `setState` 调用
+
+### 10. 分类记录功能（`src/App.jsx` + `src/storage.js` + `functions/api/settings.js`，2026-05-26）
+
+**原因**：用户希望在切换分类后，刷新页面能恢复到上次查看的分类，但需要一个开关控制是否启用。
+
+**修改**：
+- settings 新增 `rememberCategory`（bool）和 `savedCategory`（string），默认值 `false` / `''`
+- 编辑工具栏新增"记录分类"开关按钮（绿色开/灰色关），toggle 时保存 settings
+- `handleCategoryChange(category)` 统一处理分类切换：切换时若开关打开则保存
+- 初始化 `useEffect` 同时等待 sites 和 settings 就绪：当 `activeCategory === null` 且 `rememberCategory` 为 true 且 `savedCategory` 存在于分类列表时，恢复分类
+  - 不用 ref 防重入，改用 `activeCategory === null` 条件 —— 解决 sites/settings 异步加载顺序不确定导致的竞态
+- `EditTitleForm` 保存时保留 `rememberCategory` 和 `savedCategory` 字段

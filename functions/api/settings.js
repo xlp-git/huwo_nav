@@ -1,6 +1,8 @@
 const DEFAULT_SETTINGS = {
   browserTitle: '小鹏导航',
   headerTitle: '我的个人网址导航',
+  rememberCategory: false,
+  savedCategory: '',
 }
 
 export async function onRequest(context) {

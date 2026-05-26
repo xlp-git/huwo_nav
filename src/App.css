@@ -10,3 +10,16 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
+
+@keyframes favicon-spin {
+  to { transform: rotate(360deg); }
+}
+
+.favicon-spinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid #e5e7eb;
+  border-top-color: #2563eb;
+  border-radius: 50%;
+  animation: favicon-spin 0.6s linear infinite;
+}

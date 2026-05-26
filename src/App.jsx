@@ -9,16 +9,18 @@ import { getSites, addSite, updateSite, deleteSites, addCategory, getSettings, u
 const WALLPAPER_URL = 'https://api.xsot.cn/bing?jump=true'
 const WALLPAPER_TIMEOUT = 6000
 
-const FAVICON_SVG = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0MCIgaGVpZ2h0PSI0MCIgdmlld0JveD0iMCAwIDQwIDQwIj48cmVjdCB3aWR0aD0iNDAiIGhlaWdodD0iNDAiIHJ4PSI4IiBmaWxsPSIjZTVlN2ViIi8+PGNpcmNsZSBjeD0iMjAiIGN5PSIyMCIgcj0iMTIiIGZpbGw9Im5vbmUiIHN0cm9rZT0iIzZiNzI4MCIgc3Ryb2tlLXdpZHRoPSIxLjUiLz48ZWxsaXBzZSBjeD0iMjAiIGN5PSIyMCIgcng9IjUiIHJ5PSIxMiIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjNmI3MjgwIiBzdHJva2Utd2lkdGg9IjEiLz48bGluZSB4MT0iOCIgeTE9IjIwIiB4Mj0iMzIiIHkyPSIyMCIgc3Ryb2tlPSIjNmI3MjgwIiBzdHJva2Utd2lkdGg9IjEiLz48cGF0aCBkPSJNMjAgOGEyMiAxMiAwIDAgMCAwIDI0IiBmaWxsPSJub25lIiBzdHJva2U9IiM2YjcyODAiIHN0cm9rZS13aWR0aD0iMSIvPjxwYXRoIGQ9Ik0yMCA4YTIyIDEyIDAgMCAxIDAgMjQiIGZpbGw9Im5vbmUiIHN0cm9rZT0iIzZiNzI4MCIgc3Ryb2tlLXdpZHRoPSIxIi8+PC9zdmc+'
+const FAVICON_SVG = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0MCIgaGVpZ2h0PSI0MCIgdmlld0JveD0iMCAwIDQwIDQwIj48Y2lyY2xlIGN4PSIyMCIgY3k9IjIwIiByPSIxOCIgZmlsbD0iI2YxZjVmOSIvPjxjaXJjbGUgY3g9IjIwIiBjeT0iMjAiIHI9IjkuNSIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjOTRhM2I4IiBzdHJva2Utd2lkdGg9IjEuOCIvPjxlbGxpcHNlIGN4PSIyMCIgY3k9IjIwIiByeD0iNCIgcnk9IjkuNSIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjOTRhM2I4IiBzdHJva2Utd2lkdGg9IjEuMyIvPjxsaW5lIHgxPSIxMC41IiB5MT0iMjAiIHgyPSIyOS41IiB5Mj0iMjAiIHN0cm9rZT0iIzk0YTNiOCIgc3Ryb2tlLXdpZHRoPSIxLjMiLz48cGF0aCBkPSJNMjAgMTAuNWExMyA5LjUgMCAwIDAgMCAxOSIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjOTRhM2I4IiBzdHJva2Utd2lkdGg9IjEiLz48cGF0aCBkPSJNMjAgMTAuNWExMyA5LjUgMCAwIDEgMCAxOSIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjOTRhM2I4IiBzdHJva2Utd2lkdGg9IjEiLz48L3N2Zz4='
 
 function FaviconImg({ url }) {
+  const [state, setState] = useState('loading')
   const [src, setSrc] = useState(null)
   const domainRef = useRef(null)
-  const tierRef = useRef(0)
+  const cancelledRef = useRef(false)
 
   useEffect(() => {
-    let cancelled = false
-    tierRef.current = 0
+    cancelledRef.current = false
+    setState('loading')
+    setSrc(null)
 
     let domain
     try {
@@ -26,49 +28,77 @@ function FaviconImg({ url }) {
       domainRef.current = domain
     } catch {
       setSrc(FAVICON_SVG)
+      setState('fallback')
       return
     }
 
-    // 立即使用 /favicon.ico 快速展示
-    setSrc(`https://${domain}/favicon.ico`)
+    const urls = [
+      `https://${domain}/favicon.ico`,
+      `https://favicon.im/${domain}`,
+    ]
 
-    // 后台尝试 API 获取更精确的图标地址
-    async function resolveBetter() {
+    async function tryLoad() {
+      for (let i = 0; i < urls.length; i++) {
+        if (cancelledRef.current) return
+        const ok = await preload(urls[i])
+        if (cancelledRef.current) return
+        if (ok) {
+          setSrc(urls[i])
+          setState('loaded')
+          tryBetterUrl(domain, urls[0])
+          return
+        }
+      }
+      if (!cancelledRef.current) {
+        setSrc(FAVICON_SVG)
+        setState('fallback')
+      }
+    }
+
+    async function tryBetterUrl(domain, currentUrl) {
       try {
         const resp = await fetch(`/api/favicon?domain=${domain}`)
-        if (resp.ok) {
-          const { url: resolved } = await resp.json()
-          if (!cancelled && tierRef.current === 0) {
-            setSrc(resolved)
-          }
+        if (!resp.ok || cancelledRef.current) return
+        const { url: resolved } = await resp.json()
+        if (cancelledRef.current || resolved === currentUrl) return
+        const ok = await preload(resolved)
+        if (ok && !cancelledRef.current) {
+          setSrc(resolved)
         }
       } catch {}
     }
 
-    resolveBetter()
-    return () => { cancelled = true }
+    tryLoad()
+    return () => { cancelledRef.current = true }
   }, [url])
 
-  const handleError = () => {
-    if (tierRef.current === 0) {
-      tierRef.current = 1
-      setSrc(`https://favicon.im/${domainRef.current}`)
-    } else {
-      tierRef.current = 2
-      setSrc(FAVICON_SVG)
-    }
+  if (state === 'loading') {
+    return (
+      <div style={{
+        width: '48px', height: '48px',
+        display: 'flex', alignItems: 'center', justifyContent: 'center'
+      }}>
+        <div className="favicon-spinner" />
+      </div>
+    )
   }
-
-  if (!src) return null
 
   return (
     <img
       src={src}
       alt=""
-      style={{ width: '40px', height: '40px', objectFit: 'contain' }}
-      onError={handleError}
+      style={{ width: '48px', height: '48px', objectFit: 'contain' }}
     />
   )
+}
+
+function preload(src) {
+  return new Promise((resolve) => {
+    const img = new Image()
+    img.onload = () => resolve(true)
+    img.onerror = () => resolve(false)
+    img.src = src
+  })
 }
 
 function App() {
@@ -77,6 +107,8 @@ function App() {
   const [wallpaper, setWallpaper] = useState(null)
   const [browserTitle, setBrowserTitle] = useState('小鹏导航')
   const [headerTitle, setHeaderTitle] = useState('我的个人网址导航')
+  const [rememberCategory, setRememberCategory] = useState(false)
+  const [savedCategory, setSavedCategory] = useState('')
   const [showEditTitleForm, setShowEditTitleForm] = useState(false)
 
   useEffect(() => {
@@ -84,6 +116,8 @@ function App() {
     getSettings().then(s => {
       setBrowserTitle(s.browserTitle)
       setHeaderTitle(s.headerTitle)
+      setRememberCategory(s.rememberCategory || false)
+      setSavedCategory(s.savedCategory || '')
     })
   }, [])
 
@@ -133,6 +167,21 @@ function App() {
   )
   const [activeCategory, setActiveCategory] = useState(null)
   const effectiveCategory = activeCategory !== null ? activeCategory : (categories[0] || '')
+
+  // 根据记录分类设置初始化 activeCategory（等待 sites 和 settings 都就绪）
+  useEffect(() => {
+    if (categories.length > 0 && activeCategory === null && rememberCategory && savedCategory && categories.includes(savedCategory)) {
+      setActiveCategory(savedCategory)
+    }
+  }, [categories, rememberCategory, savedCategory, activeCategory])
+
+  const handleCategoryChange = (category) => {
+    setActiveCategory(category)
+    if (rememberCategory) {
+      setSavedCategory(category)
+      updateSettings({ browserTitle, headerTitle, rememberCategory: true, savedCategory: category })
+    }
+  }
   const [editMode, setEditMode] = useState(false)
   const [password, setPassword] = useState('')
   const [passwordError, setPasswordError] = useState('')
@@ -434,8 +483,37 @@ function App() {
               >
                 编辑标题
               </button>
+              <button
+                onClick={() => {
+                  const next = !rememberCategory
+                  setRememberCategory(next)
+                  if (next) {
+                    setSavedCategory(effectiveCategory)
+                    updateSettings({ browserTitle, headerTitle, rememberCategory: true, savedCategory: effectiveCategory })
+                  } else {
+                    setSavedCategory('')
+                    updateSettings({ browserTitle, headerTitle, rememberCategory: false, savedCategory: '' })
+                  }
+                }}
+                style={{
+                  padding: '8px 16px',
+                  backgroundColor: rememberCategory ? '#16a34a' : '#6b7280',
+                  color: 'white',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  border: 'none'
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = rememberCategory ? '#15803d' : '#4b5563'
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = rememberCategory ? '#16a34a' : '#6b7280'
+                }}
+              >
+                记录分类: {rememberCategory ? '开' : '关'}
+              </button>
               {filteredSites.length > 0 && (
-                <button 
+                <button
                   onClick={() => {
                     if (selectedSites.length === filteredSites.length) {
                       setSelectedSites([])
@@ -501,7 +579,7 @@ function App() {
         overflow: 'hidden'
       }}>
         <button
-            onClick={() => setActiveCategory('')}
+            onClick={() => handleCategoryChange('')}
             style={{
               padding: '8px 16px',
               borderRadius: '8px',
@@ -527,7 +605,7 @@ function App() {
         {categories.map(category => (
           <button
             key={category}
-            onClick={() => setActiveCategory(category)}
+            onClick={() => handleCategoryChange(category)}
             style={{
               padding: '8px 16px',
               borderRadius: '8px',
@@ -892,9 +970,11 @@ function App() {
           browserTitle={browserTitle}
           headerTitle={headerTitle}
           onSave={async (bt, ht) => {
-            const s = await updateSettings({ browserTitle: bt, headerTitle: ht })
+            const s = await updateSettings({ browserTitle: bt, headerTitle: ht, rememberCategory, savedCategory })
             setBrowserTitle(s.browserTitle)
             setHeaderTitle(s.headerTitle)
+            setRememberCategory(s.rememberCategory || false)
+            setSavedCategory(s.savedCategory || '')
             setShowEditTitleForm(false)
           }}
           onCancel={() => setShowEditTitleForm(false)}
