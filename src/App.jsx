@@ -170,10 +170,10 @@ function App() {
 
   // 根据记录分类设置初始化 activeCategory（等待 sites 和 settings 都就绪）
   useEffect(() => {
-    if (categories.length > 0 && activeCategory === null && rememberCategory && savedCategory && categories.includes(savedCategory)) {
+    if (categories.length > 0 && activeCategory === null && savedCategory && categories.includes(savedCategory)) {
       setActiveCategory(savedCategory)
     }
-  }, [categories, rememberCategory, savedCategory, activeCategory])
+  }, [categories, savedCategory, activeCategory])
 
   const handleCategoryChange = (category) => {
     setActiveCategory(category)
@@ -491,8 +491,7 @@ function App() {
                     setSavedCategory(effectiveCategory)
                     updateSettings({ browserTitle, headerTitle, rememberCategory: true, savedCategory: effectiveCategory })
                   } else {
-                    setSavedCategory('')
-                    updateSettings({ browserTitle, headerTitle, rememberCategory: false, savedCategory: '' })
+                    updateSettings({ browserTitle, headerTitle, rememberCategory: false, savedCategory })
                   }
                 }}
                 style={{
