@@ -11,65 +11,62 @@ const WALLPAPER_TIMEOUT = 6000
 
 const FAVICON_SVG = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0MCIgaGVpZ2h0PSI0MCIgdmlld0JveD0iMCAwIDQwIDQwIj48cmVjdCB3aWR0aD0iNDAiIGhlaWdodD0iNDAiIHJ4PSI4IiBmaWxsPSIjZTVlN2ViIi8+PGNpcmNsZSBjeD0iMjAiIGN5PSIyMCIgcj0iMTIiIGZpbGw9Im5vbmUiIHN0cm9rZT0iIzZiNzI4MCIgc3Ryb2tlLXdpZHRoPSIxLjUiLz48ZWxsaXBzZSBjeD0iMjAiIGN5PSIyMCIgcng9IjUiIHJ5PSIxMiIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjNmI3MjgwIiBzdHJva2Utd2lkdGg9IjEiLz48bGluZSB4MT0iOCIgeTE9IjIwIiB4Mj0iMzIiIHkyPSIyMCIgc3Ryb2tlPSIjNmI3MjgwIiBzdHJva2Utd2lkdGg9IjEiLz48cGF0aCBkPSJNMjAgOGEyMiAxMiAwIDAgMCAwIDI0IiBmaWxsPSJub25lIiBzdHJva2U9IiM2YjcyODAiIHN0cm9rZS13aWR0aD0iMSIvPjxwYXRoIGQ9Ik0yMCA4YTIyIDEyIDAgMCAxIDAgMjQiIGZpbGw9Im5vbmUiIHN0cm9rZT0iIzZiNzI4MCIgc3Ryb2tlLXdpZHRoPSIxIi8+PC9zdmc+'
 
-function getFaviconUrl(url, tier) {
-  try {
-    const domain = new URL(url).hostname
-    switch (tier) {
-      case 0: return `/api/favicon?domain=${domain}`
-      case 1: return `https://favicon.im/${domain}`
-      case 2: return `https://icons.duckduckgo.com/ip3/${domain}.ico`
-      default: return null
-    }
-  } catch {
-    return null
-  }
-}
-
-const FAVICON_TIMEOUT = 5000
-
 function FaviconImg({ url }) {
-  const [tier, setTier] = useState(0)
-  const timerRef = useRef(null)
-  const mountedRef = useRef(true)
+  const [src, setSrc] = useState(null)
+  const domainRef = useRef(null)
+  const tierRef = useRef(0)
 
   useEffect(() => {
-    mountedRef.current = true
-    return () => { mountedRef.current = false }
-  }, [])
+    let cancelled = false
+    tierRef.current = 0
 
-  useEffect(() => {
-    clearTimeout(timerRef.current)
-    if (tier < 3) {
-      timerRef.current = setTimeout(() => {
-        if (mountedRef.current) setTier(t => t + 1)
-      }, FAVICON_TIMEOUT)
-    }
-    return () => clearTimeout(timerRef.current)
-  }, [tier, url])
-
-  const src = tier < 3 ? (getFaviconUrl(url, tier) || FAVICON_SVG) : FAVICON_SVG
-
-  function advance() {
-    clearTimeout(timerRef.current)
-    setTier(t => t + 1)
-  }
-
-  function handleLoad(e) {
-    const img = e.target
-    if (img.naturalWidth <= 1 && img.naturalHeight <= 1) {
-      advance()
+    let domain
+    try {
+      domain = new URL(url).hostname
+      domainRef.current = domain
+    } catch {
+      setSrc(FAVICON_SVG)
       return
     }
-    clearTimeout(timerRef.current)
+
+    // 立即使用 /favicon.ico 快速展示
+    setSrc(`https://${domain}/favicon.ico`)
+
+    // 后台尝试 API 获取更精确的图标地址
+    async function resolveBetter() {
+      try {
+        const resp = await fetch(`/api/favicon?domain=${domain}`)
+        if (resp.ok) {
+          const { url: resolved } = await resp.json()
+          if (!cancelled && tierRef.current === 0) {
+            setSrc(resolved)
+          }
+        }
+      } catch {}
+    }
+
+    resolveBetter()
+    return () => { cancelled = true }
+  }, [url])
+
+  const handleError = () => {
+    if (tierRef.current === 0) {
+      tierRef.current = 1
+      setSrc(`https://favicon.im/${domainRef.current}`)
+    } else {
+      tierRef.current = 2
+      setSrc(FAVICON_SVG)
+    }
   }
+
+  if (!src) return null
 
   return (
     <img
       src={src}
-      alt="icon"
+      alt=""
       style={{ width: '40px', height: '40px', objectFit: 'contain' }}
-      onLoad={handleLoad}
-      onError={advance}
+      onError={handleError}
     />
   )
 }

@@ -3,7 +3,10 @@ export async function onRequest(context) {
   const domain = url.searchParams.get('domain')
 
   if (!domain) {
-    return new Response('domain required', { status: 400 })
+    return new Response(JSON.stringify({ error: 'domain required' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    })
   }
 
   try {
@@ -34,9 +37,19 @@ export async function onRequest(context) {
     }
 
     if (icons.length > 0) {
-      return Response.redirect(icons[0].url, 302)
+      return new Response(JSON.stringify({ url: icons[0].url }), {
+        headers: {
+          'Content-Type': 'application/json',
+          'Cache-Control': 'public, max-age=86400',
+        },
+      })
     }
   } catch { /* page fetch failed */ }
 
-  return Response.redirect(`https://${domain}/favicon.ico`, 302)
+  return new Response(JSON.stringify({ url: `https://${domain}/favicon.ico` }), {
+    headers: {
+      'Content-Type': 'application/json',
+      'Cache-Control': 'public, max-age=3600',
+    },
+  })
 }

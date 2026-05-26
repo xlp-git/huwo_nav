@@ -5,6 +5,11 @@ import { resolve } from 'path'
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
+  server: {
+    proxy: {
+      '/api/favicon': 'https://huwo-nav.pages.dev',
+    },
+  },
   build: {
     outDir: 'dist',
     emptyOutDir: true,

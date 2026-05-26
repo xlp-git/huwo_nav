@@ -185,7 +185,7 @@ body 含 `{ browserTitle, headerTitle }`，写入 KV `app_settings` 键并返回
 - **搜索**：搜索词匹配 `site.name` 或 `site.url`（大小写不敏感），可与分类过滤叠加
 - **全选逻辑**：点击"全选"选中当前 `filteredSites` 所有站点；已全选时变为"取消全选"
 - **收藏夹导入**：上传浏览器导出的 Netscape HTML 格式文件，客户端正则解析（storage.js `parseBookmarkHtml`），API 可用时优先走 API 导入
-- **Favicon 获取**：级联回退 — `favicon.im` → `google.com/s2/favicons` → SVG 占位符（`getFaviconUrl` + img `onError` 切换 data-tier）
+- **Favicon 获取**：`FaviconImg` 组件 — 立即渲染 `/favicon.ico` → 后台 API 尝试获取更精确地址 → onError 级联回退 `favicon.im` → SVG 占位符（ref 追踪 tier，避免多余重渲染）
 - **背景壁纸**：通过 `new Image()` 预加载 `api.xsot.cn/bing`，6 秒超时，失败/超时后每 10 秒自动重试，加载成功后停止。未加载时显示三色渐变背景
 - **全屏背景层**：独立 `<div>` 使用 `position: fixed; inset: 0; z-index: -1`，内容层与背景分离
 - **毛玻璃效果**：三个内容区块使用 `backdropFilter: blur(12px)` + `rgba(255,255,255,0.06)` + `borderRadius: 8px` + `overflow: hidden`（防止圆角锯齿）
@@ -248,17 +248,14 @@ body 含 `{ browserTitle, headerTitle }`，写入 KV `app_settings` 键并返回
 - 组件卸载时 `cleanup` 取消所有定时器
 - 移除未使用的 `timestamp` state
 
-### 3. Favicon 级联回退（`src/App.jsx`）
+### 3. Favicon 级联回退（`src/App.jsx` + `functions/api/favicon.js`）
 
-**原因**：favicon 单一来源 `favicon.im`，网络不好时图标全部显示占位符。
+**原因**：favicon 单一来源 `favicon.im`，网络不好时图标全部显示占位符。Google S2 被墙、DuckDuckGo 返回占位 PNG 均不可用。
 
 **修改**：
-- 新增 `getFaviconUrl(url, tier)` 函数，根据 tier 返回不同服务地址
-  - tier 0: `favicon.im`
-  - tier 1: `google.com/s2/favicons`
-  - 以上均失败: `FAVICON_SVG` 常量（SVG 占位符）
-- `<img>` 标签 `onError` 中通过 `data-tier` 属性追踪当前层级，失败后递增切换
-- `FAVICON_SVG` 提取为模块级常量，避免 JSX 中内联长字符串
+- 新建 `functions/api/favicon.js` — 服务端解析目标站点 HTML 中 `<link rel="icon">` 标签，获取真实 favicon URL，SVG 优先
+- `FaviconImg` 组件（`src/App.jsx`）— 完整重写（详见 #9）
+- `vite.config.js` 添加 `/api/favicon` 代理到 `huwo-nav.pages.dev`，本地开发可走生产 API
 
 ### 4. 全屏背景层重构（`src/App.jsx`）
 
@@ -324,3 +321,17 @@ body 含 `{ browserTitle, headerTitle }`，写入 KV `app_settings` 键并返回
 - 新增派生值 `effectiveCategory = activeCategory !== null ? activeCategory : (categories[0] || '')`
 - 过滤逻辑和分类按钮高亮均改用 `effectiveCategory`
 - 新增"全部"按钮（onClick 设 `setActiveCategory('')`），允许用户手动切回全部视图
+
+### 9. FaviconImg 组件重写（`src/App.jsx`，2026-05-26）
+
+**原因**：旧实现等待 API 返回后才渲染（返回 `null`），API 超时/失败后直接降级到 `favicon.im`，且 `onError` 用 DOM 属性 `data-tier` 追踪层级，存在竞态问题（图标先显示后回退到 SVG）。
+
+**修改**：
+- `FaviconImg` 从函数重写为组件，使用 `useRef` 追踪 `domain` 和 `tier`（替代 DOM `data-tier`）
+- **立即渲染**：不再等待 API，直接设置 `src` 为 `https://${domain}/favicon.ico`，零延迟展示
+- **后台优化**：`resolveBetter()` 异步请求 `/api/favicon?domain=`，仅在 `tier === 0`（未发生回退）时替换为更精确的图标地址
+- **三级回退链**（`handleError`）：
+  - tier 0 → 1：`/favicon.ico` 加载失败 → 尝试 `https://favicon.im/${domain}`
+  - tier 1 → 2：`favicon.im` 加载失败 → 使用 `FAVICON_SVG` 地球占位符
+  - tier 2：已是 SVG，不再处理
+- `cancelled` 标志防止组件卸载后的 `setSrc` 调用
