@@ -9,7 +9,7 @@ import { getSites, addSite, updateSite, deleteSites, addCategory, getSettings, u
 const WALLPAPER_URL = 'https://api.xsot.cn/bing?jump=true'
 const WALLPAPER_TIMEOUT = 6000
 
-const FAVICON_SVG = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0MCIgaGVpZ2h0PSI0MCIgdmlld0JveD0iMCAwIDQwIDQwIiBmaWxsPSJub25lIj48Y2lyY2xlIGN4PSIyMCIgY3k9IjIwIiByPSIxNiIgc3Ryb2tlPSIjOWNhM2FmIiBzdHJva2Utd2lkdGg9IjIiLz48ZWxsaXBzZSBjeD0iMjAiIGN5PSIyMCIgcng9IjgiIHJ5PSIxNiIgc3Ryb2tlPSIjOWNhM2FmIiBzdHJva2Utd2lkdGg9IjIiLz48cGF0aCBkPSJNNCAyMGgzMiIgc3Ryb2tlPSIjOWNhM2FmIiBzdHJva2Utd2lkdGg9IjIiLz48cGF0aCBkPSJNMjAgNGEyNCAxNiAwIDAgMCAwIDMyIiBzdHJva2U9IiM5Y2EzYWYiIHN0cm9rZS13aWR0aD0iMiIvPjxwYXRoIGQ9Ik0yMCA0YTI0IDE2IDAgMCAxIDAgMzIiIHN0cm9rZT0iIzljYTNhZiIgc3Ryb2tlLXdpZHRoPSIyIi8+PC9zdmc+'
+const FAVICON_SVG = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0MCIgaGVpZ2h0PSI0MCIgdmlld0JveD0iMCAwIDQwIDQwIj48cmVjdCB3aWR0aD0iNDAiIGhlaWdodD0iNDAiIHJ4PSI4IiBmaWxsPSIjZTVlN2ViIi8+PGNpcmNsZSBjeD0iMjAiIGN5PSIyMCIgcj0iMTIiIGZpbGw9Im5vbmUiIHN0cm9rZT0iIzZiNzI4MCIgc3Ryb2tlLXdpZHRoPSIxLjUiLz48ZWxsaXBzZSBjeD0iMjAiIGN5PSIyMCIgcng9IjUiIHJ5PSIxMiIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjNmI3MjgwIiBzdHJva2Utd2lkdGg9IjEiLz48bGluZSB4MT0iOCIgeTE9IjIwIiB4Mj0iMzIiIHkyPSIyMCIgc3Ryb2tlPSIjNmI3MjgwIiBzdHJva2Utd2lkdGg9IjEiLz48cGF0aCBkPSJNMjAgOGEyMiAxMiAwIDAgMCAwIDI0IiBmaWxsPSJub25lIiBzdHJva2U9IiM2YjcyODAiIHN0cm9rZS13aWR0aD0iMSIvPjxwYXRoIGQ9Ik0yMCA4YTIyIDEyIDAgMCAxIDAgMjQiIGZpbGw9Im5vbmUiIHN0cm9rZT0iIzZiNzI4MCIgc3Ryb2tlLXdpZHRoPSIxIi8+PC9zdmc+'
 
 function getFaviconUrl(url, tier) {
   try {
@@ -51,13 +51,27 @@ function FaviconImg({ url }) {
 
   const src = tier < 4 ? (getFaviconUrl(url, tier) || FAVICON_SVG) : FAVICON_SVG
 
+  function advance() {
+    clearTimeout(timerRef.current)
+    setTier(t => t + 1)
+  }
+
+  function handleLoad(e) {
+    const img = e.target
+    if (img.naturalWidth <= 1 && img.naturalHeight <= 1) {
+      advance()
+      return
+    }
+    clearTimeout(timerRef.current)
+  }
+
   return (
     <img
       src={src}
       alt="icon"
       style={{ width: '40px', height: '40px', objectFit: 'contain' }}
-      onLoad={() => clearTimeout(timerRef.current)}
-      onError={() => { clearTimeout(timerRef.current); setTier(t => t + 1) }}
+      onLoad={handleLoad}
+      onError={advance}
     />
   )
 }
