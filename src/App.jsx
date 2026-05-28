@@ -645,7 +645,7 @@ function App() {
                 boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
                 transition: 'all 0.2s',
                 border: selectedSites.includes(site.id) ? '2px solid #2563eb' : 'none',
-                cursor: editMode ? 'pointer' : 'default',
+                cursor: 'pointer',
                 overflow: 'hidden'
               }}
               onMouseEnter={(e) => {
@@ -656,7 +656,13 @@ function App() {
                 e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.1)'
                 e.currentTarget.style.transform = 'translateY(0)'
               }}
-              onClick={() => editMode && handleEditSite(site)}
+              onClick={() => {
+                if (editMode) {
+                  handleEditSite(site)
+                } else {
+                  window.open(site.url, '_blank', 'noopener,noreferrer')
+                }
+              }}
             >
               <div style={{ 
                 width: '60px',
@@ -671,34 +677,25 @@ function App() {
               }}>
                 <FaviconImg key={site.url} url={site.url} />
               </div>
-              <a 
-                href={site.url} 
-                target="_blank" 
-                rel="noopener noreferrer"
-                style={{ 
+              <span
+                style={{
                   fontSize: '14px',
                   color: '#111827',
-                  textDecoration: 'none',
                   textAlign: 'center',
                   maxWidth: '100%',
                   overflow: 'hidden',
                   textOverflow: 'ellipsis',
                   whiteSpace: 'nowrap'
                 }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.color = '#2563eb'
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.color = '#111827'
-                }}
               >
                 {site.name}
-              </a>
+              </span>
               {editMode && (
                 <input
                   type="checkbox"
                   checked={selectedSites.includes(site.id)}
                   onChange={() => handleSiteSelect(site.id)}
+                  onClick={(e) => e.stopPropagation()}
                   style={{ 
                     width: '16px',
                     height: '16px',
