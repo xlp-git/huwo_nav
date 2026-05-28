@@ -361,3 +361,14 @@ body 含 `{ browserTitle, headerTitle }`，写入 KV `app_settings` 键并返回
 **原因**：多级回退（`/favicon.ico` → `favicon.im` → 后台 API）链路复杂，且 `favicon.im/zh/` 已足够稳定。
 
 **修改**：简化为仅 `https://favicon.im/zh/${domain}` 单一来源，失败直接显示 SVG 占位符。移除 `/favicon.ico` 直连和后台 API 预加载逻辑。
+
+	### 13. 站点卡片全区域可点击跳转（`src/App.jsx`，2026-05-28）
+
+	**原因**：只有点击卡片内的名称链接（`<a>` 标签）才能跳转网站，点击图标区域无反应，交互不一致。
+
+	**修改**：
+	- 卡片外层 `<div>` 的 `onClick` 在非编辑模式下调用 `window.open(site.url, '_blank', 'noopener,noreferrer')`
+	- 编辑模式下仍调用 `handleEditSite(site)` 打开编辑表单
+	- 站点名称从 `<a>` 标签改为 `<span>`，避免 `<a>` 和父级 `window.open` 双重跳转
+	- `cursor` 统一为 `pointer`，不再区分编辑/非编辑模式
+	- 复选框添加 `onClick={(e) => e.stopPropagation()}`，阻止冒泡导致误触发卡片点击
