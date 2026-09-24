@@ -2,19 +2,34 @@ const DEFAULT_SETTINGS = {
   browserTitle: '小鹏导航',
   headerTitle: '我的个人网址导航',
   rememberCategory: false,
+  categoryOrder: [],
 }
 
-// 只保存已知字段，防止写入任意内容
-function sanitize(input) {
-  const settings = { ...DEFAULT_SETTINGS }
+// 只合并已知字段：请求里没带的字段保留原值（例如只保存分类顺序时不会清空标题），未知字段丢弃
+function merge(base, input) {
+  const settings = { ...base }
   if (typeof input?.browserTitle === 'string' && input.browserTitle.trim()) {
     settings.browserTitle = input.browserTitle.trim().slice(0, 100)
   }
   if (typeof input?.headerTitle === 'string' && input.headerTitle.trim()) {
     settings.headerTitle = input.headerTitle.trim().slice(0, 100)
   }
-  settings.rememberCategory = Boolean(input?.rememberCategory)
+  if (input && 'rememberCategory' in input) {
+    settings.rememberCategory = Boolean(input.rememberCategory)
+  }
+  if (Array.isArray(input?.categoryOrder)) {
+    const names = input.categoryOrder
+      .filter(name => typeof name === 'string')
+      .map(name => name.trim().slice(0, 50))
+      .filter(Boolean)
+    settings.categoryOrder = [...new Set(names)].slice(0, 500)
+  }
   return settings
+}
+
+async function readSettings(env) {
+  const raw = await env.NAV_SITES.get('app_settings')
+  return merge(DEFAULT_SETTINGS, raw ? JSON.parse(raw) : {})
 }
 
 export async function onRequest(context) {
@@ -23,9 +38,7 @@ export async function onRequest(context) {
 
   if (method === 'GET') {
     try {
-      const raw = await env.NAV_SITES.get('app_settings')
-      const settings = raw ? { ...DEFAULT_SETTINGS, ...JSON.parse(raw) } : DEFAULT_SETTINGS
-      return new Response(JSON.stringify(settings), {
+      return new Response(JSON.stringify(await readSettings(env)), {
         headers: { 'Content-Type': 'application/json' },
       })
     } catch (error) {
@@ -38,7 +51,7 @@ export async function onRequest(context) {
 
   if (method === 'PUT') {
     try {
-      const settings = sanitize(await request.json())
+      const settings = merge(await readSettings(env), await request.json())
       await env.NAV_SITES.put('app_settings', JSON.stringify(settings))
       return new Response(JSON.stringify(settings), {
         headers: { 'Content-Type': 'application/json' },

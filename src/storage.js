@@ -19,6 +19,7 @@ const DEFAULT_SETTINGS = {
   browserTitle: '小鹏导航',
   headerTitle: '我的个人网址导航',
   rememberCategory: false,
+  categoryOrder: [],
 }
 
 // 编辑密码只保存在内存中，刷新或退出编辑即失效
@@ -189,6 +190,42 @@ export async function addCategory(name) {
   return sites
 }
 
+// 重命名分类：该分类下所有记录（含占位）改为新名称，返回完整站点数组
+export async function renameCategory(from, to) {
+  if (!LOCAL_MODE) {
+    const sites = await apiWrite('/api/categories', jsonBody('PUT', { from, to }))
+    writeLocal(sites)
+    return sites
+  }
+  const sites = readLocal()
+  if (from !== to && sites.some(s => s.category === to)) {
+    throw new Error(`分类「${to}」已存在`)
+  }
+  const updated = sites.map(s => {
+    if (s.category !== from) return s
+    return s.isPlaceholder ? { ...s, category: to, name: '分类占位: ' + to } : { ...s, category: to }
+  })
+  writeLocal(updated)
+  return updated
+}
+
+// 删除分类：mode = 'move' 站点移到未分类，'delete' 连同站点删除；返回完整站点数组
+export async function deleteCategory(name, mode) {
+  if (!LOCAL_MODE) {
+    const sites = await apiWrite('/api/categories', jsonBody('DELETE', { name, mode }))
+    writeLocal(sites)
+    return sites
+  }
+  const sites = readLocal()
+  const updated = mode === 'delete'
+    ? sites.filter(s => s.category !== name)
+    : sites
+      .filter(s => !(s.isPlaceholder && s.category === name))
+      .map(s => (s.category === name ? { ...s, category: '' } : s))
+  writeLocal(updated)
+  return updated
+}
+
 // ---------- 设置 ----------
 
 export async function getSettings() {
@@ -205,8 +242,11 @@ export async function getSettings() {
   return { ...DEFAULT_SETTINGS, ...readJson(SETTINGS_KEY, {}) }
 }
 
+// 只更新传入的字段（服务端同样按字段合并），例如只保存分类顺序不会影响标题
 export async function updateSettings(settings) {
-  const data = LOCAL_MODE ? { ...DEFAULT_SETTINGS, ...settings } : await apiWrite('/api/settings', jsonBody('PUT', settings))
+  const data = LOCAL_MODE
+    ? { ...DEFAULT_SETTINGS, ...readJson(SETTINGS_KEY, {}), ...settings }
+    : await apiWrite('/api/settings', jsonBody('PUT', settings))
   writeJson(SETTINGS_KEY, data)
   return data
 }
