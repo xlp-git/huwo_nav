@@ -256,21 +256,6 @@ export function getCachedSettings() {
   return { ...DEFAULT_SETTINGS, ...readJson(SETTINGS_KEY, {}) }
 }
 
-// 记录上次查看的分类（各设备通用，存 KV）。服务端只在记录分类开启且值有变化时才写入；
-// 这是唯一不需要编辑密码的写操作
-export async function saveLastCategory(category) {
-  let data
-  if (LOCAL_MODE) {
-    data = getCachedSettings()
-    if (!data.rememberCategory) throw new Error('记录分类未开启')
-    data.savedCategory = category
-  } else {
-    data = await apiWrite('/api/last-category', jsonBody('PUT', { category }))
-  }
-  writeJson(SETTINGS_KEY, data)
-  return data
-}
-
 // ---------- 导入 ----------
 
 function readFileText(file) {

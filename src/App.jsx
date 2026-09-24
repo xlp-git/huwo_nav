@@ -7,7 +7,7 @@ import EditTitleForm from './components/EditTitleForm'
 import Modal from './components/Modal'
 import {
   getSites, addSite, updateSite, deleteSites, addCategory, renameCategory, deleteCategory,
-  getSettings, getCachedSettings, updateSettings, saveLastCategory,
+  getSettings, getCachedSettings, updateSettings,
   verifyPassword, clearPassword,
 } from './storage'
 import { isHttpUrl } from './lib/bookmarks'
@@ -287,10 +287,15 @@ function App() {
     setActiveCategory(category)
     setSelectedSites([])
     const key = toSavedKey(category)
-    // 只在记录分类开启且分类有变化时写入，避免重复写 KV
-    if (rememberCategory && key !== savedCategory) {
+    // 只在编辑模式下记录（写 KV 需要密码，普通浏览来回点分类也不消耗免费版每天 1000 次写入额度），
+    // 且记录分类开启、分类有变化时才写
+    if (editMode && rememberCategory && key !== savedCategory) {
+      const previous = savedCategory
       setSavedCategory(key)
-      saveLastCategory(key).catch(error => notify(error.message || '记录分类失败', 'error'))
+      updateSettings({ savedCategory: key }).catch(error => {
+        setSavedCategory(previous)
+        notify(error.message || '记录分类失败', 'error')
+      })
     }
   }
 

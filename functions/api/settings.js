@@ -32,7 +32,7 @@ function merge(base, input) {
   return settings
 }
 
-export async function readSettings(env) {
+async function readSettings(env) {
   const raw = await env.NAV_SITES.get('app_settings')
   return merge(DEFAULT_SETTINGS, raw ? JSON.parse(raw) : {})
 }
