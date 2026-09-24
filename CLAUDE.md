@@ -45,7 +45,6 @@ npm run deploy       # 通过 Wrangler 部署 dist/ 到 Cloudflare Pages
 │       ├── sites.js            # 站点 CRUD API (GET/POST/PUT/DELETE)，字段白名单 + URL 校验
 │       ├── import.js           # 收藏夹导入 API (POST JSON)，校验 + 去重合并
 │       ├── categories.js       # 分类管理 API (PUT 重命名 / DELETE 删除)
-│       ├── last-category.js    # 记录上次查看的分类 (PUT，唯一免密写接口)
 │       └── settings.js         # 应用设置 API (GET/PUT)，只保存已知字段
 ├── src/
 │   ├── main.jsx                # React 入口，StrictMode + createRoot
@@ -114,7 +113,7 @@ App.jsx 是唯一的状态持有者，子组件通过 props 接收回调和数�
 ### 后端：Pages Functions
 
 - 通过文件路径路由：`functions/api/xxx.js` → `/api/xxx`
-- `_middleware.js` 作用于 `/api/*`：GET/HEAD/OPTIONS 放行，`PUT /api/last-category` 免密放行（只能改记录的分类）；其余请求要求请求头 `X-Edit-Password`（URI 编码）与环境变量 `EDIT_PASSWORD` 一致（SHA-256 摘要后逐字节比较），否则 401；未配置 `EDIT_PASSWORD` 时拒绝一切写入（503）
+- `_middleware.js` 作用于 `/api/*`：GET/HEAD/OPTIONS 放行；其余请求要求请求头 `X-Edit-Password`（URI 编码）与环境变量 `EDIT_PASSWORD` 一致（SHA-256 摘要后逐字节比较），否则 401；未配置 `EDIT_PASSWORD` 时拒绝一切写入（503）
 - 所有写操作都是"读出 `all_sites` 整个数组 → 修改 → 写回"
 
 ### API 路由详情
@@ -136,8 +135,6 @@ App.jsx 是唯一的状态持有者，子组件通过 props 接收回调和数�
 **`PUT /api/categories`**（需密码）— body `{ from, to }`，把该分类下所有记录（含占位，占位名称同步改）改为新名称；目标已存在 409、源不存在 404，返回完整数组。
 
 **`DELETE /api/categories`**（需密码）— body `{ name, mode }`：`mode: 'move'` 删除该分类的占位记录、其余站点 `category` 置空（归入未分类，只在"全部"中显示）；`mode: 'delete'` 连同站点一起删除。返回完整数组。
-
-**`PUT /api/last-category`**（**免密**）— body `{ category }`，只改 `app_settings.savedCategory`。记录分类未开启返回 409；值没变不写 KV；返回完整设置。
 
 **`GET /api/settings`** — 返回 `app_settings`，缺省字段用默认值补齐。
 
@@ -172,7 +169,7 @@ App.jsx 是唯一的状态持有者，子组件通过 props 接收回调和数�
 }
 ```
 
-"记录分类"：开启时切换分类即通过免密接口写 `savedCategory`（值没变不写），刷新或换设备打开时恢复；关闭时清空记录、不写也不恢复，首页打开排第一的分类。首屏先用 localStorage 缓存的设置恢复，避免闪现第一个分类。
+"记录分类"：开启时**只在编辑模式下**切换分类才写 `savedCategory`（走需密码的 `PUT /api/settings`，值没变不写），普通浏览来回点分类不写 KV；刷新或换设备打开时恢复（所有访客都生效）；关闭时清空记录、不写也不恢复，首页打开排第一的分类。首屏先用 localStorage 缓存的设置恢复，避免闪现第一个分类。
 
 ### 本地开发模式
 
@@ -565,3 +562,13 @@ App.jsx 是唯一的状态持有者，子组件通过 props 接收回调和数�
 - **联动**：重命名已记录的分类时，记录与分类顺序一起改名，合并为一次设置写入；删除分类不再特意清记录（不存在的分类恢复时自动忽略）；保存标题不再附带 `rememberCategory`
 - **安全取舍**：免密接口只能改一个字段，最坏情况是被人改掉首页默认打开的分类、消耗 KV 写入额度，不影响站点数据
 - 验证：后端新增 4 个用例（共 25 个通过）；生产构建 + 真实 functions 代码的浏览器测试 21 项通过：关闭时切换不写 KV、刷新打开第一的分类（忽略旧本设备记录）；开启后普通浏览切换写 1 次、重复点不写、刷新和另一台设备都恢复；排序变化后仍恢复记录的分类；可记录"全部""未分类"；关闭后视图不跳、记录清空、两台设备刷新都为第一；重命名后记录和顺序同步新名
+
+### 25. 记录分类只在编辑模式下写入，删除免密接口（`functions/api/_middleware.js` + `settings.js` + `src/storage.js` + `src/App.jsx`，删除 `functions/api/last-category.js`，2026-09-24）
+
+**原因**：#24 让普通浏览切换分类也写 KV，用户指出 KV 免费版每天只有 1000 次写入，来回点分类很容易超出。用户确认：只在编辑模式下记录，普通浏览不记录。
+
+**修改**：
+- `handleCategoryChange`：只有 `editMode && rememberCategory` 且分类有变化时才写入，改走需密码的 `updateSettings({ savedCategory })`，失败回滚并提示
+- 删除 #24 新增的免密接口 `functions/api/last-category.js`、`_middleware.js` 的免密白名单和 `storage.js` 的 `saveLastCategory`，所有写操作重新全部需要密码
+- 恢复逻辑不变：记录分类开启时，任何人打开/刷新都恢复记录的分类（按名称，拖动排序不影响）；关闭时首页打开排第一的分类
+- 验证：后端 23 个用例通过（新增"last-category 路径与 settings 写 savedCategory 均需密码"）；生产构建 + 真实 functions 代码的浏览器测试 18 项通过：普通浏览来回点 5 次分类写入 0 次、记录不变；编辑模式切换写 1 次、重复点不写；刷新和另一台设备恢复；排序变化后仍恢复；可记录"全部"；关闭后视图不跳、记录清空、编辑模式切换也不写、两台设备刷新都为第一
