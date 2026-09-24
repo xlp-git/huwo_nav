@@ -3,6 +3,8 @@
 // 请求头 X-Edit-Password 为 encodeURIComponent 编码后的密码（支持中文等非 ASCII 字符）。
 
 const READ_METHODS = new Set(['GET', 'HEAD', 'OPTIONS'])
+// 免密写接口：只能记录"上次查看的分类"（见 last-category.js），普通浏览切换分类时调用
+const PUBLIC_WRITES = new Set(['PUT /api/last-category'])
 
 function json(body, status) {
   return new Response(JSON.stringify(body), {
@@ -27,6 +29,7 @@ async function safeEqual(a, b) {
 export async function onRequest(context) {
   const { request, env, next } = context
   if (READ_METHODS.has(request.method)) return next()
+  if (PUBLIC_WRITES.has(`${request.method} ${new URL(request.url).pathname.replace(/\/+$/, '')}`)) return next()
 
   const expected = env.EDIT_PASSWORD
   if (!expected) {

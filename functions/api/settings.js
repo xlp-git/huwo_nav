@@ -3,6 +3,8 @@ const DEFAULT_SETTINGS = {
   headerTitle: '我的个人网址导航',
   rememberCategory: false,
   categoryOrder: [],
+  // 记录分类开启时的"上次查看的分类"：'' = 无记录，'__all__' = 全部，其余为分类名（含 '__uncategorized__'）
+  savedCategory: '',
 }
 
 // 只合并已知字段：请求里没带的字段保留原值（例如只保存分类顺序时不会清空标题），未知字段丢弃
@@ -24,10 +26,13 @@ function merge(base, input) {
       .filter(Boolean)
     settings.categoryOrder = [...new Set(names)].slice(0, 500)
   }
+  if (typeof input?.savedCategory === 'string') {
+    settings.savedCategory = input.savedCategory.trim().slice(0, 50)
+  }
   return settings
 }
 
-async function readSettings(env) {
+export async function readSettings(env) {
   const raw = await env.NAV_SITES.get('app_settings')
   return merge(DEFAULT_SETTINGS, raw ? JSON.parse(raw) : {})
 }

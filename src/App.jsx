@@ -7,8 +7,8 @@ import EditTitleForm from './components/EditTitleForm'
 import Modal from './components/Modal'
 import {
   getSites, addSite, updateSite, deleteSites, addCategory, renameCategory, deleteCategory,
-  getSettings, updateSettings,
-  verifyPassword, clearPassword, getSavedCategory, setSavedCategory as persistSavedCategory,
+  getSettings, getCachedSettings, updateSettings, saveLastCategory,
+  verifyPassword, clearPassword,
 } from './storage'
 import { isHttpUrl } from './lib/bookmarks'
 
@@ -124,17 +124,22 @@ const SKELETON_CARDS = Array.from({ length: 10 }, (_, i) => i)
 // "未分类"不是真实存储的分类：只要有 category 为空的站点，分类栏末尾就显示这一项
 const UNCATEGORIZED = '__uncategorized__'
 const UNCATEGORIZED_LABEL = '未分类'
+// 设置 savedCategory 的存储值：'' = 无记录，'__all__' = 全部（界面里"全部"是 ''），其余即分类名
+const SAVED_ALL = '__all__'
+const toSavedKey = (category) => (category === '' ? SAVED_ALL : category)
 
 function App() {
   const [sites, setSites] = useState([])
   const [sitesLoading, setSitesLoading] = useState(true)
   const [selectedSites, setSelectedSites] = useState([])
   const [wallpaper, setWallpaper] = useState(null)
-  const [browserTitle, setBrowserTitle] = useState('小鹏导航')
-  const [headerTitle, setHeaderTitle] = useState('我的个人网址导航')
-  const [rememberCategory, setRememberCategory] = useState(false)
-  const [categoryOrder, setCategoryOrder] = useState([])
-  const [savedCategory, setSavedCategory] = useState(() => getSavedCategory())
+  // 先用本地缓存的设置，接口返回后再更新，首屏不会先闪现第一个分类
+  const [cachedSettings] = useState(getCachedSettings)
+  const [browserTitle, setBrowserTitle] = useState(cachedSettings.browserTitle)
+  const [headerTitle, setHeaderTitle] = useState(cachedSettings.headerTitle)
+  const [rememberCategory, setRememberCategory] = useState(Boolean(cachedSettings.rememberCategory))
+  const [categoryOrder, setCategoryOrder] = useState(Array.isArray(cachedSettings.categoryOrder) ? cachedSettings.categoryOrder : [])
+  const [savedCategory, setSavedCategory] = useState(cachedSettings.savedCategory || '')
   const [showEditTitleForm, setShowEditTitleForm] = useState(false)
 
   // 轻提示
@@ -160,6 +165,7 @@ function App() {
       setHeaderTitle(s.headerTitle)
       setRememberCategory(Boolean(s.rememberCategory))
       setCategoryOrder(Array.isArray(s.categoryOrder) ? s.categoryOrder : [])
+      setSavedCategory(s.savedCategory || '')
     })
   }, [])
 
@@ -271,15 +277,20 @@ function App() {
   // activeCategory: null = 未手动选择；'' = 全部。已不存在的分类视为未选择
   const [activeCategory, setActiveCategory] = useState(null)
   const validActive = activeCategory === '' || navCategories.includes(activeCategory) ? activeCategory : null
-  const restoredCategory = savedCategory && navCategories.includes(savedCategory) ? savedCategory : null
+  // 记录分类开启时才恢复记录（按分类名记录，拖动排序不影响）；关闭时打开排在第一的分类
+  const restoredCategory = !rememberCategory ? null
+    : savedCategory === SAVED_ALL ? ''
+      : savedCategory && navCategories.includes(savedCategory) ? savedCategory : null
   const effectiveCategory = validActive ?? restoredCategory ?? navCategories[0] ?? ''
 
   const handleCategoryChange = (category) => {
     setActiveCategory(category)
     setSelectedSites([])
-    if (rememberCategory) {
-      setSavedCategory(category)
-      persistSavedCategory(category)
+    const key = toSavedKey(category)
+    // 只在记录分类开启且分类有变化时写入，避免重复写 KV
+    if (rememberCategory && key !== savedCategory) {
+      setSavedCategory(key)
+      saveLastCategory(key).catch(error => notify(error.message || '记录分类失败', 'error'))
     }
   }
 
@@ -406,10 +417,6 @@ function App() {
       }
       setActiveCategory(moved ? UNCATEGORIZED : null)
       setSelectedSites([])
-      if (savedCategory === name) {
-        setSavedCategory('')
-        persistSavedCategory('')
-      }
       notify(text, 'success')
     }
     setConfirmState({
@@ -470,14 +477,16 @@ function App() {
     setRenameSaving(true)
     try {
       setSites(await renameCategory(from, to))
-      if (categoryOrder.includes(from)) {
-        saveCategoryOrder(categoryOrder.map(name => (name === from ? to : name)), categoryOrder)
+      // 分类顺序和记录的分类里的旧名一起换成新名，合并成一次设置写入
+      const patch = {}
+      if (categoryOrder.includes(from)) patch.categoryOrder = categoryOrder.map(name => (name === from ? to : name))
+      if (savedCategory === from) patch.savedCategory = to
+      if (Object.keys(patch).length) {
+        if (patch.categoryOrder) setCategoryOrder(patch.categoryOrder)
+        if (patch.savedCategory) setSavedCategory(to)
+        updateSettings(patch).catch(error => notify(error.message || '保存设置失败', 'error'))
       }
       if (activeCategory === from) setActiveCategory(to)
-      if (savedCategory === from) {
-        setSavedCategory(to)
-        persistSavedCategory(to)
-      }
       setRenamingCategory(null)
       notify(`已将「${from}」重命名为「${to}」`, 'success')
     } catch (error) {
@@ -581,7 +590,7 @@ function App() {
   }
 
   const handleSaveTitles = async (bt, ht) => {
-    const s = await updateSettings({ browserTitle: bt, headerTitle: ht, rememberCategory })
+    const s = await updateSettings({ browserTitle: bt, headerTitle: ht })
     setBrowserTitle(s.browserTitle)
     setHeaderTitle(s.headerTitle)
     setShowEditTitleForm(false)
@@ -591,12 +600,11 @@ function App() {
   const toggleRememberCategory = async () => {
     const next = !rememberCategory
     try {
-      await updateSettings({ browserTitle, headerTitle, rememberCategory: next })
-      setRememberCategory(next)
-      if (next) {
-        setSavedCategory(effectiveCategory)
-        persistSavedCategory(effectiveCategory)
-      }
+      // 开启时记下当前分类；关闭时清空记录，之后不再记录也不再恢复
+      const s = await updateSettings({ rememberCategory: next, savedCategory: next ? toSavedKey(effectiveCategory) : '' })
+      if (!next && activeCategory === null) setActiveCategory(effectiveCategory)
+      setRememberCategory(s.rememberCategory)
+      setSavedCategory(s.savedCategory || '')
     } catch (error) {
       notify(error.message || '保存失败', 'error')
     }

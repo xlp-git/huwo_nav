@@ -13,13 +13,13 @@ const LOCAL_MODE = import.meta.env.DEV
 
 const STORAGE_KEY = 'nav_sites'
 const SETTINGS_KEY = 'nav_settings'
-const SAVED_CATEGORY_KEY = 'nav_saved_category'
 
 const DEFAULT_SETTINGS = {
   browserTitle: '小鹏导航',
   headerTitle: '我的个人网址导航',
   rememberCategory: false,
   categoryOrder: [],
+  savedCategory: '', // 记录分类开启时的上次查看分类（'' = 无记录，'__all__' = 全部）
 }
 
 // 编辑密码只保存在内存中，刷新或退出编辑即失效
@@ -251,17 +251,24 @@ export async function updateSettings(settings) {
   return data
 }
 
-// 上次查看的分类只存在本设备：普通浏览时无需编辑密码，也不消耗 KV 写入额度
-export function getSavedCategory() {
-  const value = readJson(SAVED_CATEGORY_KEY, '')
-  if (value) return value
-  // 兼容旧版本：savedCategory 曾保存在设置里
-  const legacy = readJson(SETTINGS_KEY, {}).savedCategory
-  return typeof legacy === 'string' ? legacy : ''
+// 本地缓存的设置（同步读取），首屏先用它恢复分类，避免等接口时先闪现第一个分类
+export function getCachedSettings() {
+  return { ...DEFAULT_SETTINGS, ...readJson(SETTINGS_KEY, {}) }
 }
 
-export function setSavedCategory(category) {
-  writeJson(SAVED_CATEGORY_KEY, category)
+// 记录上次查看的分类（各设备通用，存 KV）。服务端只在记录分类开启且值有变化时才写入；
+// 这是唯一不需要编辑密码的写操作
+export async function saveLastCategory(category) {
+  let data
+  if (LOCAL_MODE) {
+    data = getCachedSettings()
+    if (!data.rememberCategory) throw new Error('记录分类未开启')
+    data.savedCategory = category
+  } else {
+    data = await apiWrite('/api/last-category', jsonBody('PUT', { category }))
+  }
+  writeJson(SETTINGS_KEY, data)
+  return data
 }
 
 // ---------- 导入 ----------
