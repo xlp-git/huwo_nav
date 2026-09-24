@@ -1,71 +1,60 @@
-import { useState, useMemo, useEffect, useRef } from 'react'
+import { useState, useMemo, useEffect, useRef, useCallback } from 'react'
 import './App.css'
 import AddSiteForm from './components/AddSiteForm'
 import ImportBookmarks from './components/ImportBookmarks'
 import EditSiteForm from './components/EditSiteForm'
 import EditTitleForm from './components/EditTitleForm'
-import { getSites, addSite, updateSite, deleteSites, addCategory, getSettings, updateSettings } from './storage'
+import Modal from './components/Modal'
+import {
+  getSites, addSite, updateSite, deleteSites, addCategory, getSettings, updateSettings,
+  verifyPassword, clearPassword, getSavedCategory, setSavedCategory as persistSavedCategory,
+} from './storage'
+import { isHttpUrl } from './lib/bookmarks'
 
 const WALLPAPER_URL = 'https://api.xsot.cn/bing?jump=true'
 const WALLPAPER_TIMEOUT = 6000
+const WALLPAPER_RETRY = 10000
+const WEB_SEARCH_URL = 'https://www.bing.com/search?q='
 
 const FAVICON_SVG = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0MCIgaGVpZ2h0PSI0MCIgdmlld0JveD0iMCAwIDQwIDQwIj48Y2lyY2xlIGN4PSIyMCIgY3k9IjIwIiByPSIxOCIgZmlsbD0iI2YxZjVmOSIvPjxjaXJjbGUgY3g9IjIwIiBjeT0iMjAiIHI9IjkuNSIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjOTRhM2I4IiBzdHJva2Utd2lkdGg9IjEuOCIvPjxlbGxpcHNlIGN4PSIyMCIgY3k9IjIwIiByeD0iNCIgcnk9IjkuNSIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjOTRhM2I4IiBzdHJva2Utd2lkdGg9IjEuMyIvPjxsaW5lIHgxPSIxMC41IiB5MT0iMjAiIHgyPSIyOS41IiB5Mj0iMjAiIHN0cm9rZT0iIzk0YTNiOCIgc3Ryb2tlLXdpZHRoPSIxLjMiLz48cGF0aCBkPSJNMjAgMTAuNWExMyA5LjUgMCAwIDAgMCAxOSIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjOTRhM2I4IiBzdHJva2Utd2lkdGg9IjEiLz48cGF0aCBkPSJNMjAgMTAuNWExMyA5LjUgMCAwIDEgMCAxOSIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjOTRhM2I4IiBzdHJva2Utd2lkdGg9IjEiLz48L3N2Zz4='
 
+function hostnameOf(url) {
+  try {
+    return new URL(url).hostname
+  } catch {
+    return ''
+  }
+}
+
+// 卡片副标题显示的域名，去掉 www. 前缀
+function hostOf(url) {
+  return hostnameOf(url).replace(/^www\./, '') || url
+}
+
+// 已加载过的图标地址，切换分类重新挂载卡片时直接复用，避免再次显示加载动画
+const faviconCache = new Map()
+
 function FaviconImg({ url }) {
-  const [state, setState] = useState('loading')
-  const [src, setSrc] = useState(null)
-  const cancelledRef = useRef(false)
+  const domain = hostnameOf(url)
+  const [src, setSrc] = useState(() => faviconCache.get(url) || (domain ? null : FAVICON_SVG))
 
   useEffect(() => {
-    cancelledRef.current = false
-    setState('loading')
-    setSrc(null)
-
-    let domain
-    try {
-      domain = new URL(url).hostname
-    } catch {
-      setSrc(FAVICON_SVG)
-      setState('fallback')
-      return
-    }
-
+    if (!domain || faviconCache.has(url)) return
+    let cancelled = false
     const faviconUrl = `https://favicon.im/zh/${domain}`
+    preload(faviconUrl).then(ok => {
+      const finalSrc = ok ? faviconUrl : FAVICON_SVG
+      faviconCache.set(url, finalSrc)
+      if (!cancelled) setSrc(finalSrc)
+    })
+    return () => { cancelled = true }
+  }, [url, domain])
 
-    async function tryLoad() {
-      const ok = await preload(faviconUrl)
-      if (cancelledRef.current) return
-      if (ok) {
-        setSrc(faviconUrl)
-        setState('loaded')
-      } else {
-        setSrc(FAVICON_SVG)
-        setState('fallback')
-      }
-    }
-
-    tryLoad()
-    return () => { cancelledRef.current = true }
-  }, [url])
-
-  if (state === 'loading') {
-    return (
-      <div style={{
-        width: '48px', height: '48px',
-        display: 'flex', alignItems: 'center', justifyContent: 'center'
-      }}>
-        <div className="favicon-spinner" />
-      </div>
-    )
+  if (!src) {
+    return <div className="favicon-spinner" />
   }
 
-  return (
-    <img
-      src={src}
-      alt=""
-      style={{ width: '48px', height: '48px', objectFit: 'contain' }}
-    />
-  )
+  return <img className="site-favicon" src={src} alt="" />
 }
 
 function preload(src) {
@@ -77,23 +66,93 @@ function preload(src) {
   })
 }
 
+const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六']
+
+function greeting(hour) {
+  if (hour < 5) return '夜深了'
+  if (hour < 9) return '早上好'
+  if (hour < 12) return '上午好'
+  if (hour < 14) return '中午好'
+  if (hour < 18) return '下午好'
+  return '晚上好'
+}
+
+// 独立组件自更新，不会带动整个 App 重新渲染；对齐到整秒，避免秒数跳变不均
+function Clock() {
+  const [now, setNow] = useState(() => new Date())
+
+  useEffect(() => {
+    let timer
+    const tick = () => {
+      const current = new Date()
+      setNow(current)
+      timer = setTimeout(tick, 1000 - current.getMilliseconds())
+    }
+    timer = setTimeout(tick, 1000 - new Date().getMilliseconds())
+    return () => clearTimeout(timer)
+  }, [])
+
+  const hh = String(now.getHours()).padStart(2, '0')
+  const mm = String(now.getMinutes()).padStart(2, '0')
+  const ss = String(now.getSeconds()).padStart(2, '0')
+
+  return (
+    <div className="clock">
+      <div className="clock-time">
+        {hh}<span className="clock-colon">:</span>{mm}<span className="clock-sec">{ss}</span>
+      </div>
+      <div className="clock-date">
+        {now.getMonth() + 1}月{now.getDate()}日 星期{WEEKDAYS[now.getDay()]} · {greeting(now.getHours())}
+      </div>
+    </div>
+  )
+}
+
+// 仅在有精确指针（鼠标）且未开启"减少动态效果"时启用光斑和视差
+function motionEnabled() {
+  return window.matchMedia('(hover: hover) and (pointer: fine)').matches &&
+    !window.matchMedia('(prefers-reduced-motion: reduce)').matches
+}
+
+function isTypingTarget(el) {
+  return el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable)
+}
+
+const SKELETON_CARDS = Array.from({ length: 10 }, (_, i) => i)
+
 function App() {
   const [sites, setSites] = useState([])
+  const [sitesLoading, setSitesLoading] = useState(true)
   const [selectedSites, setSelectedSites] = useState([])
   const [wallpaper, setWallpaper] = useState(null)
   const [browserTitle, setBrowserTitle] = useState('小鹏导航')
   const [headerTitle, setHeaderTitle] = useState('我的个人网址导航')
   const [rememberCategory, setRememberCategory] = useState(false)
-  const [savedCategory, setSavedCategory] = useState('')
+  const [savedCategory, setSavedCategory] = useState(() => getSavedCategory())
   const [showEditTitleForm, setShowEditTitleForm] = useState(false)
 
+  // 轻提示
+  const [toasts, setToasts] = useState([])
+  const toastIdRef = useRef(0)
+  const notify = useCallback((message, type = 'info') => {
+    const id = ++toastIdRef.current
+    setToasts(prev => [...prev, { id, message, type }])
+    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 3200)
+  }, [])
+
+  // 确认框：{ title, message, confirmText, onConfirm }
+  const [confirmState, setConfirmState] = useState(null)
+  const [confirmBusy, setConfirmBusy] = useState(false)
+
   useEffect(() => {
-    getSites().then(setSites)
+    getSites().then(data => {
+      setSites(data)
+      setSitesLoading(false)
+    })
     getSettings().then(s => {
       setBrowserTitle(s.browserTitle)
       setHeaderTitle(s.headerTitle)
-      setRememberCategory(s.rememberCategory || false)
-      setSavedCategory(s.savedCategory || '')
+      setRememberCategory(Boolean(s.rememberCategory))
     })
   }, [])
 
@@ -101,28 +160,34 @@ function App() {
     document.title = browserTitle
   }, [browserTitle])
 
-  // 壁纸加载（自动重试）
-  const retryRef = useRef(null)
-
+  // 壁纸加载（自动重试）：一旦有一次加载成功就停止，超时后迟到的成功也会被采用并取消重试
   useEffect(() => {
     let cancelled = false
+    let settled = false
+    let retryTimer = null
+
+    function scheduleRetry() {
+      clearTimeout(retryTimer)
+      retryTimer = setTimeout(loadWallpaper, WALLPAPER_RETRY)
+    }
 
     function loadWallpaper() {
-      if (cancelled) return
+      if (cancelled || settled) return
       const img = new Image()
       const timeout = setTimeout(() => {
-        if (!cancelled) {
-          retryRef.current = setTimeout(loadWallpaper, 10000)
-        }
+        if (!cancelled && !settled) scheduleRetry()
       }, WALLPAPER_TIMEOUT)
 
       img.onload = () => {
         clearTimeout(timeout)
-        if (!cancelled) setWallpaper(img.src)
+        if (cancelled || settled) return
+        settled = true
+        clearTimeout(retryTimer)
+        setWallpaper(img.src)
       }
       img.onerror = () => {
         clearTimeout(timeout)
-        if (!cancelled) retryRef.current = setTimeout(loadWallpaper, 10000)
+        if (!cancelled && !settled) scheduleRetry()
       }
       img.src = `${WALLPAPER_URL}&t=${Date.now()}`
     }
@@ -131,809 +196,589 @@ function App() {
 
     return () => {
       cancelled = true
-      clearTimeout(retryRef.current)
+      clearTimeout(retryTimer)
     }
   }, [])
+
+  // 壁纸视差：鼠标位置映射为 --px/--py（-1 ~ 1），CSS 据此反向平移背景
+  useEffect(() => {
+    if (!motionEnabled()) return
+    const root = document.documentElement
+    let frame = 0
+    let x = 0
+    let y = 0
+    const onMove = (e) => {
+      x = e.clientX / window.innerWidth * 2 - 1
+      y = e.clientY / window.innerHeight * 2 - 1
+      if (frame) return
+      frame = requestAnimationFrame(() => {
+        frame = 0
+        root.style.setProperty('--px', x.toFixed(3))
+        root.style.setProperty('--py', y.toFixed(3))
+      })
+    }
+    window.addEventListener('pointermove', onMove)
+    return () => {
+      window.removeEventListener('pointermove', onMove)
+      cancelAnimationFrame(frame)
+    }
+  }, [])
+
+  // 面板光斑：把鼠标相对面板和各卡片的坐标写入 --mx/--my，不触发 React 渲染
+  const panelRef = useRef(null)
+  const spotFrameRef = useRef(0)
+  const pointerRef = useRef({ x: 0, y: 0 })
+
+  const handlePanelMove = (e) => {
+    pointerRef.current = { x: e.clientX, y: e.clientY }
+    if (spotFrameRef.current || !motionEnabled()) return
+    spotFrameRef.current = requestAnimationFrame(() => {
+      spotFrameRef.current = 0
+      const panel = panelRef.current
+      if (!panel) return
+      const { x, y } = pointerRef.current
+      const rect = panel.getBoundingClientRect()
+      panel.style.setProperty('--mx', `${x - rect.left}px`)
+      panel.style.setProperty('--my', `${y - rect.top}px`)
+      panel.querySelectorAll('.site-card').forEach(card => {
+        const r = card.getBoundingClientRect()
+        card.style.setProperty('--mx', `${x - r.left}px`)
+        card.style.setProperty('--my', `${y - r.top}px`)
+      })
+    })
+  }
+
+  useEffect(() => () => cancelAnimationFrame(spotFrameRef.current), [])
+
   const [showAddForm, setShowAddForm] = useState(false)
   const [showImportForm, setShowImportForm] = useState(false)
   const [showPasswordForm, setShowPasswordForm] = useState(false)
+
+  // 分类从全部记录（含占位）提取；展示和计数只用真实站点
   const categories = useMemo(
     () => [...new Set(sites.map(site => site.category).filter(Boolean))],
     [sites]
   )
-  const [activeCategory, setActiveCategory] = useState(null)
-  const effectiveCategory = activeCategory !== null ? activeCategory : (categories[0] || '')
+  const visibleSites = useMemo(() => sites.filter(site => !site.isPlaceholder), [sites])
 
-  // 根据记录分类设置初始化 activeCategory（等待 sites 和 settings 都就绪）
-  useEffect(() => {
-    if (categories.length > 0 && activeCategory === null && savedCategory && categories.includes(savedCategory)) {
-      setActiveCategory(savedCategory)
-    }
-  }, [categories, savedCategory, activeCategory])
+  // activeCategory: null = 未手动选择；'' = 全部。已不存在的分类视为未选择
+  const [activeCategory, setActiveCategory] = useState(null)
+  const validActive = activeCategory === '' || categories.includes(activeCategory) ? activeCategory : null
+  const restoredCategory = savedCategory && categories.includes(savedCategory) ? savedCategory : null
+  const effectiveCategory = validActive ?? restoredCategory ?? categories[0] ?? ''
 
   const handleCategoryChange = (category) => {
     setActiveCategory(category)
+    setSelectedSites([])
     if (rememberCategory) {
       setSavedCategory(category)
-      updateSettings({ browserTitle, headerTitle, rememberCategory: true, savedCategory: category })
+      persistSavedCategory(category)
     }
   }
+
   const [editMode, setEditMode] = useState(false)
   const [password, setPassword] = useState('')
   const [passwordError, setPasswordError] = useState('')
+  const [verifying, setVerifying] = useState(false)
   const [showAddCategoryForm, setShowAddCategoryForm] = useState(false)
   const [newCategory, setNewCategory] = useState('')
+  const [categoryError, setCategoryError] = useState('')
+  const [categorySaving, setCategorySaving] = useState(false)
   const [editingSite, setEditingSite] = useState(null)
-  const [showEditForm, setShowEditForm] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
+  const searchRef = useRef(null)
 
   // 过滤当前分类的站点
-  const filteredSites = sites.filter(site => {
+  const keyword = searchTerm.trim().toLowerCase()
+  const filteredSites = visibleSites.filter(site => {
     const categoryMatch = !effectiveCategory || site.category === effectiveCategory
-    const searchMatch = !searchTerm || 
-                       site.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                       site.url.toLowerCase().includes(searchTerm.toLowerCase())
-    
+    const searchMatch = !keyword ||
+      String(site.name || '').toLowerCase().includes(keyword) ||
+      String(site.url || '').toLowerCase().includes(keyword)
     return categoryMatch && searchMatch
   })
 
+  // 批量操作只作用于当前可见的已选站点，避免误删被搜索隐藏的站点
+  const selectedSet = new Set(selectedSites)
+  const visibleSelected = filteredSites.filter(site => selectedSet.has(site.id)).map(site => site.id)
+  const allVisibleSelected = filteredSites.length > 0 && visibleSelected.length === filteredSites.length
+
+  const openSite = (site) => {
+    if (!isHttpUrl(site.url)) {
+      notify('该链接不是 http/https 地址，已阻止打开', 'error')
+      return
+    }
+    window.open(site.url, '_blank', 'noopener,noreferrer')
+  }
+
+  const activateSite = (site) => {
+    if (editMode) {
+      setEditingSite(site)
+    } else {
+      openSite(site)
+    }
+  }
+
+  // 快捷键：/ 聚焦搜索框（输入中或弹窗打开时不拦截）
+  useEffect(() => {
+    const onKeyDown = (e) => {
+      if (e.key !== '/' || e.ctrlKey || e.metaKey || e.altKey) return
+      if (isTypingTarget(document.activeElement) || document.querySelector('.modal-mask')) return
+      e.preventDefault()
+      searchRef.current?.focus()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
+
+  const handleSearchKeyDown = (e) => {
+    if (e.key === 'Escape') {
+      setSearchTerm('')
+      return
+    }
+    if (e.key !== 'Enter' || e.nativeEvent.isComposing || !keyword) return
+    if (filteredSites.length > 0) {
+      activateSite(filteredSites[0])
+    } else if (!editMode) {
+      window.open(WEB_SEARCH_URL + encodeURIComponent(searchTerm.trim()), '_blank', 'noopener,noreferrer')
+    }
+  }
+
   // 处理站点选择
   const handleSiteSelect = (id) => {
-    setSelectedSites(prev => {
-      if (prev.includes(id)) {
-        return prev.filter(siteId => siteId !== id)
-      } else {
-        return [...prev, id]
-      }
+    setSelectedSites(prev => (prev.includes(id) ? prev.filter(siteId => siteId !== id) : [...prev, id]))
+  }
+
+  const toggleSelectAll = () => {
+    const visibleIds = new Set(filteredSites.map(site => site.id))
+    if (allVisibleSelected) {
+      setSelectedSites(prev => prev.filter(id => !visibleIds.has(id)))
+    } else {
+      setSelectedSites(prev => [...new Set([...prev, ...visibleIds])])
+    }
+  }
+
+  // 处理批量删除（先确认）
+  const handleBatchDelete = () => {
+    const ids = visibleSelected
+    if (ids.length === 0) return
+    setConfirmState({
+      title: '批量删除',
+      message: `确定删除选中的 ${ids.length} 个站点吗？此操作无法撤销。`,
+      confirmText: '删除',
+      onConfirm: async () => {
+        const remaining = await deleteSites(ids)
+        setSites(remaining)
+        setSelectedSites(prev => prev.filter(id => !ids.includes(id)))
+        notify(`已删除 ${ids.length} 个站点`, 'success')
+      },
     })
   }
 
-  // 处理批量删除
-  const handleBatchDelete = async () => {
-    if (selectedSites.length === 0) return
-    const remaining = await deleteSites(selectedSites)
-    setSites(remaining)
-    setSelectedSites([])
+  const runConfirm = async () => {
+    setConfirmBusy(true)
+    try {
+      await confirmState.onConfirm()
+    } catch (error) {
+      notify(error.message || '操作失败', 'error')
+    } finally {
+      setConfirmBusy(false)
+      setConfirmState(null)
+    }
   }
 
-  // 处理添加站点
+  // 处理添加站点（错误抛回表单显示）
   const handleAddSite = async (newSite) => {
     const created = await addSite(newSite)
     setSites(prev => [...prev, created])
     setShowAddForm(false)
+    notify(`已添加「${created.name}」`, 'success')
   }
 
   // 处理导入完成
-  const handleImportComplete = async () => {
-    const data = await getSites()
-    setSites(data)
+  const handleImportComplete = async ({ count, skipped }) => {
+    setSites(await getSites())
     setShowImportForm(false)
+    notify(`已导入 ${count} 个站点${skipped ? `，跳过 ${skipped} 个已存在的网址` : ''}`, 'success')
   }
 
-  // 处理密码提交
-  const handlePasswordSubmit = (e) => {
+  // 处理密码提交：生产环境由服务端校验
+  const closePasswordForm = () => {
+    setShowPasswordForm(false)
+    setPassword('')
+    setPasswordError('')
+  }
+
+  const handlePasswordSubmit = async (e) => {
     e.preventDefault()
-    const correctPassword = import.meta.env.VITE_PASSWORD || 'admin123'
-    if (password === correctPassword) {
+    if (verifying) return
+    setVerifying(true)
+    const result = await verifyPassword(password)
+    setVerifying(false)
+    if (result.ok) {
       setEditMode(true)
-      setShowPasswordForm(false)
-      setPasswordError('')
+      closePasswordForm()
     } else {
-      setPasswordError('密码错误，请重新输入')
+      setPasswordError(result.error)
     }
+  }
+
+  const exitEditMode = () => {
+    setEditMode(false)
+    setSelectedSites([])
+    clearPassword()
   }
 
   // 处理添加分类
-  const handleAddCategory = async (categoryName) => {
-    if (!categoryName || categoryName.trim() === '') return
-    if (categories.includes(categoryName.trim())) {
-      alert('分类已存在')
-      return
-    }
-    const result = await addCategory(categoryName.trim())
-    if (result.error) {
-      alert(result.error)
-      return
-    }
-    setSites(result.sites)
-    setNewCategory('')
+  const closeCategoryForm = () => {
     setShowAddCategoryForm(false)
+    setNewCategory('')
+    setCategoryError('')
   }
 
-  // 处理编辑网站
-  const handleEditSite = (site) => {
-    setEditingSite(site)
-    setShowEditForm(true)
-  }
-
-  // 处理更新网站
-  const handleUpdateSite = async (updatedSite) => {
-    const result = await updateSite(updatedSite)
-    if (result) {
-      setSites(result)
+  const handleAddCategory = async (e) => {
+    e.preventDefault()
+    const name = newCategory.trim()
+    if (!name || categorySaving) return
+    if (categories.includes(name)) {
+      setCategoryError('分类已存在')
+      return
     }
-    setEditingSite(null)
-    setShowEditForm(false)
+    setCategorySaving(true)
+    try {
+      setSites(await addCategory(name))
+      closeCategoryForm()
+      handleCategoryChange(name)
+      notify(`已添加分类「${name}」`, 'success')
+    } catch (error) {
+      setCategoryError(error.message || '添加失败，请重试')
+    } finally {
+      setCategorySaving(false)
+    }
   }
+
+  // 处理更新网站（错误抛回表单显示）
+  const handleUpdateSite = async (updatedSite) => {
+    setSites(await updateSite(updatedSite))
+    setEditingSite(null)
+    notify('已保存修改', 'success')
+  }
+
+  const handleSaveTitles = async (bt, ht) => {
+    const s = await updateSettings({ browserTitle: bt, headerTitle: ht, rememberCategory })
+    setBrowserTitle(s.browserTitle)
+    setHeaderTitle(s.headerTitle)
+    setShowEditTitleForm(false)
+    notify('标题已保存', 'success')
+  }
+
+  const toggleRememberCategory = async () => {
+    const next = !rememberCategory
+    try {
+      await updateSettings({ browserTitle, headerTitle, rememberCategory: next })
+      setRememberCategory(next)
+      if (next) {
+        setSavedCategory(effectiveCategory)
+        persistSavedCategory(effectiveCategory)
+      }
+    } catch (error) {
+      notify(error.message || '保存失败', 'error')
+    }
+  }
+
+  // 分类栏：内容超出时在上/下边缘显示渐隐，提示还能滚动（直接改 class，不触发渲染）
+  const categoriesRef = useRef(null)
+  const updateCategoryFade = useCallback(() => {
+    const el = categoriesRef.current
+    if (!el) return
+    el.classList.toggle('more-above', el.scrollTop > 2)
+    el.classList.toggle('more-below', el.scrollTop + el.clientHeight < el.scrollHeight - 2)
+  }, [])
+
+  useEffect(() => {
+    const el = categoriesRef.current
+    if (!el) return
+    updateCategoryFade()
+    const observer = new ResizeObserver(updateCategoryFade)
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [categories, updateCategoryFade])
+
+  // 分类栏最大高度 = 从它当前顶部到屏幕底部：首屏时整栏都在屏幕内，吸顶后长到接近一屏高
+  const sidebarRef = useRef(null)
+  useEffect(() => {
+    const el = sidebarRef.current
+    if (!el) return
+    let frame = 0
+    const fit = () => {
+      frame = 0
+      const stickyTop = parseFloat(getComputedStyle(el).top) || 0
+      const top = Math.max(el.getBoundingClientRect().top, stickyTop)
+      el.style.maxHeight = `${Math.max(window.innerHeight - top - stickyTop, 160)}px`
+    }
+    const schedule = () => {
+      if (!frame) frame = requestAnimationFrame(fit)
+    }
+    fit()
+    window.addEventListener('scroll', schedule, { passive: true })
+    window.addEventListener('resize', schedule)
+    // 编辑工具栏出现/消失等会改变分类栏位置但不触发滚动，监听页面尺寸变化兜底
+    const observer = new ResizeObserver(schedule)
+    observer.observe(document.body)
+    return () => {
+      window.removeEventListener('scroll', schedule)
+      window.removeEventListener('resize', schedule)
+      observer.disconnect()
+      cancelAnimationFrame(frame)
+    }
+  }, [])
+
+  // 选中的分类不在可见范围内时（如刷新后恢复到靠下的分类），只滚动分类栏让它出现在
+  // "分类栏与屏幕的交集"中间；首屏分类栏下半截可能在屏幕外，所以要按实际露出的区域计算
+  useEffect(() => {
+    const el = categoriesRef.current
+    const active = el?.querySelector('.chip.active')
+    if (!active) return
+    const navRect = el.getBoundingClientRect()
+    const itemRect = active.getBoundingClientRect()
+    const top = Math.max(navRect.top, 0)
+    const bottom = Math.min(navRect.bottom, window.innerHeight)
+    if (bottom - top < itemRect.height) return
+    if (itemRect.top < top || itemRect.bottom > bottom) {
+      el.scrollTop += (itemRect.top + itemRect.height / 2) - (top + bottom) / 2
+    }
+  }, [effectiveCategory, categories])
+
+  // 分类项：名称超长省略并以 title 显示全名
+  const renderChip = (category, label) => (
+    <button
+      key={category}
+      className={`chip${effectiveCategory === category ? ' active' : ''}`}
+      onClick={() => handleCategoryChange(category)}
+      title={label}
+    >
+      <span className="chip-label">{label}</span>
+    </button>
+  )
+
+  const emptyText = keyword
+    ? `没有找到匹配「${searchTerm.trim()}」的站点${editMode ? '' : '，按回车用必应搜索'}`
+    : effectiveCategory
+      ? `「${effectiveCategory}」分类下还没有站点${editMode ? '，点击上方「添加站点」' : ''}`
+      : '暂无站点，请进入编辑模式添加或导入收藏夹'
 
   return (
     <>
       {/* 全屏背景层 */}
-      <div style={{
-        position: 'fixed',
-        inset: 0,
-        zIndex: -1,
-        background: wallpaper
-          ? `linear-gradient(rgba(26,26,46,0.3), rgba(26,26,46,0.5)), url(${wallpaper}) center/cover no-repeat`
-          : 'linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%)',
-        transition: 'background 0.8s ease'
-      }} />
+      <div className="bg-layer">
+        <div
+          className={`bg-image${wallpaper ? ' loaded' : ''}`}
+          style={wallpaper ? { backgroundImage: `url("${wallpaper}")` } : undefined}
+        />
+        <div className="bg-overlay" />
+      </div>
       {/* 内容层 */}
-      <div style={{
-        minHeight: '100vh',
-        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
-      }}>
-      {/* 顶部导航栏 */}
-      <header>
-        <div style={{
-          maxWidth: '1280px',
-          margin: '16px auto 0',
-          padding: '16px',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '16px',
-          backgroundColor: 'rgba(255, 255, 255, 0.06)',
-          backdropFilter: 'blur(12px)',
-          borderRadius: '8px',
-          overflow: 'hidden'
-        }}>
-          <div style={{ 
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center'
-          }}>
-            <h1 style={{ 
-              fontSize: '24px',
-              fontWeight: 'bold',
-              color: '#111827'
-            }}>{headerTitle}</h1>
-            {editMode ? (
-              <button 
-                onClick={() => setEditMode(false)}
-                style={{ 
-                  padding: '8px 16px',
-                  backgroundColor: '#6b7280',
-                  color: 'white',
-                  borderRadius: '6px',
-                  cursor: 'pointer',
-                  border: 'none'
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.backgroundColor = '#4b5563'
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.backgroundColor = '#6b7280'
-                }}
-              >
-                退出编辑
-              </button>
-            ) : (
-              <button 
-                onClick={() => setShowPasswordForm(true)}
-                style={{ 
-                  padding: '8px 16px',
-                  backgroundColor: '#f59e0b',
-                  color: 'white',
-                  borderRadius: '6px',
-                  cursor: 'pointer',
-                  border: 'none'
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.backgroundColor = '#d97706'
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.backgroundColor = '#f59e0b'
-                }}
-              >
-                编辑
-              </button>
-            )}
-          </div>
-          
-          {/* 搜索栏 */}
-          <div style={{ 
-            display: 'flex',
-            gap: '8px',
-            maxWidth: '600px',
-            margin: '0 auto'
-          }}>
+      <div className="page">
+        {/* 顶部栏 */}
+        <header className="topbar">
+          <h1 className="site-title">{headerTitle}</h1>
+          {editMode ? (
+            <button className="btn" onClick={exitEditMode}>退出编辑</button>
+          ) : (
+            <button className="btn" onClick={() => setShowPasswordForm(true)}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>
+              编辑
+            </button>
+          )}
+        </header>
+
+        {/* 时钟 + 搜索 + 编辑工具栏 */}
+        <section className="hero">
+          <Clock />
+          <div className="search">
+            <svg className="search-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
             <input
+              ref={searchRef}
+              className="search-input"
               type="text"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="输入搜索内容..."
-              style={{
-                flex: 1,
-                padding: '8px 12px',
-                borderRadius: '6px 0 0 6px',
-                border: '1px solid #d1d5db',
-                fontSize: '14px'
-              }}
+              onKeyDown={handleSearchKeyDown}
+              placeholder="搜索站点，回车打开第一个结果"
+              aria-label="搜索站点"
             />
-            <button
-              onClick={() => setSearchTerm('')}
-              style={{
-                padding: '8px 16px',
-                backgroundColor: '#2563eb',
-                color: 'white',
-                borderRadius: '0 6px 6px 0',
-                cursor: 'pointer',
-                border: 'none'
-              }}
-            >
-              清除
-            </button>
+            {searchTerm ? (
+              <button className="search-clear" onClick={() => setSearchTerm('')} aria-label="清除">×</button>
+            ) : (
+              <kbd className="search-kbd">/</kbd>
+            )}
           </div>
-          
-          {/* 编辑模式工具栏 */}
+
           {editMode && (
-            <div style={{ 
-              display: 'flex',
-              gap: '8px',
-              justifyContent: 'center',
-              flexWrap: 'wrap'
-            }}>
-              <button 
-                onClick={() => setShowAddForm(true)}
-                style={{ 
-                  padding: '8px 16px',
-                  backgroundColor: '#2563eb',
-                  color: 'white',
-                  borderRadius: '6px',
-                  cursor: 'pointer',
-                  border: 'none'
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.backgroundColor = '#1d4ed8'
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.backgroundColor = '#2563eb'
-                }}
-              >
-                添加站点
-              </button>
-              <button 
-                onClick={() => setShowImportForm(true)}
-                style={{ 
-                  padding: '8px 16px',
-                  backgroundColor: '#16a34a',
-                  color: 'white',
-                  borderRadius: '6px',
-                  cursor: 'pointer',
-                  border: 'none'
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.backgroundColor = '#15803d'
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.backgroundColor = '#16a34a'
-                }}
-              >
-                导入收藏夹
-              </button>
-              <button 
-                onClick={() => setShowAddCategoryForm(true)}
-                style={{ 
-                  padding: '8px 16px',
-                  backgroundColor: '#8b5cf6',
-                  color: 'white',
-                  borderRadius: '6px',
-                  cursor: 'pointer',
-                  border: 'none'
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.backgroundColor = '#7c3aed'
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.backgroundColor = '#8b5cf6'
-                }}
-              >
-                添加分类
-              </button>
-              <button
-                onClick={() => setShowEditTitleForm(true)}
-                style={{
-                  padding: '8px 16px',
-                  backgroundColor: '#f59e0b',
-                  color: 'white',
-                  borderRadius: '6px',
-                  cursor: 'pointer',
-                  border: 'none'
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.backgroundColor = '#d97706'
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.backgroundColor = '#f59e0b'
-                }}
-              >
-                编辑标题
-              </button>
-              <button
-                onClick={() => {
-                  const next = !rememberCategory
-                  setRememberCategory(next)
-                  if (next) {
-                    setSavedCategory(effectiveCategory)
-                    updateSettings({ browserTitle, headerTitle, rememberCategory: true, savedCategory: effectiveCategory })
-                  } else {
-                    updateSettings({ browserTitle, headerTitle, rememberCategory: false, savedCategory })
-                  }
-                }}
-                style={{
-                  padding: '8px 16px',
-                  backgroundColor: rememberCategory ? '#16a34a' : '#6b7280',
-                  color: 'white',
-                  borderRadius: '6px',
-                  cursor: 'pointer',
-                  border: 'none'
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.backgroundColor = rememberCategory ? '#15803d' : '#4b5563'
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.backgroundColor = rememberCategory ? '#16a34a' : '#6b7280'
-                }}
-              >
+            <div className="toolbar">
+              <button className="btn btn-primary" onClick={() => setShowAddForm(true)}>添加站点</button>
+              <button className="btn" onClick={() => setShowImportForm(true)}>导入收藏夹</button>
+              <button className="btn" onClick={() => setShowAddCategoryForm(true)}>添加分类</button>
+              <button className="btn" onClick={() => setShowEditTitleForm(true)}>编辑标题</button>
+              <button className={`btn${rememberCategory ? ' btn-on' : ''}`} onClick={toggleRememberCategory}>
                 记录分类: {rememberCategory ? '开' : '关'}
               </button>
               {filteredSites.length > 0 && (
-                <button
-                  onClick={() => {
-                    if (selectedSites.length === filteredSites.length) {
-                      setSelectedSites([])
-                    } else {
-                      setSelectedSites(filteredSites.map(site => site.id))
-                    }
-                  }}
-                  style={{ 
-                    padding: '8px 16px',
-                    backgroundColor: '#8b5cf6',
-                    color: 'white',
-                    borderRadius: '6px',
-                    cursor: 'pointer',
-                    border: 'none'
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.backgroundColor = '#7c3aed'
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.backgroundColor = '#8b5cf6'
-                  }}
-                >
-                  {selectedSites.length === filteredSites.length ? '取消全选' : '全选'}
+                <button className="btn" onClick={toggleSelectAll}>
+                  {allVisibleSelected ? '取消全选' : '全选'}
                 </button>
               )}
-              {selectedSites.length > 0 && (
-                <button 
-                  onClick={handleBatchDelete}
-                  style={{ 
-                    padding: '8px 16px',
-                    backgroundColor: '#dc2626',
-                    color: 'white',
-                    borderRadius: '6px',
-                    cursor: 'pointer',
-                    border: 'none'
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.backgroundColor = '#b91c1c'
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.backgroundColor = '#dc2626'
-                  }}
-                >
-                  批量删除 ({selectedSites.length})
+              {visibleSelected.length > 0 && (
+                <button className="btn btn-danger" onClick={handleBatchDelete}>
+                  批量删除 ({visibleSelected.length})
                 </button>
               )}
             </div>
           )}
-        </div>
-      </header>
+        </section>
 
-      {/* 分类导航 */}
-      <div style={{
-        maxWidth: '1280px',
-        margin: '16px auto 0',
-        padding: '16px',
-        display: 'flex',
-        flexWrap: 'wrap',
-        gap: '8px',
-        backgroundColor: 'rgba(255, 255, 255, 0.06)',
-        backdropFilter: 'blur(12px)',
-        borderRadius: '8px',
-        overflow: 'hidden'
-      }}>
-        <button
-            onClick={() => handleCategoryChange('')}
-            style={{
-              padding: '8px 16px',
-              borderRadius: '8px',
-              backgroundColor: effectiveCategory === '' ? '#2563eb' : 'white',
-              color: effectiveCategory === '' ? 'white' : '#4b5563',
-              cursor: 'pointer',
-              border: effectiveCategory === '' ? '1px solid #2563eb' : '1px solid #e5e7eb',
-              overflow: 'hidden'
-            }}
-            onMouseEnter={(e) => {
-              if (effectiveCategory !== '') {
-                e.currentTarget.style.backgroundColor = '#f3f4f6'
-              }
-            }}
-            onMouseLeave={(e) => {
-              if (effectiveCategory !== '') {
-                e.currentTarget.style.backgroundColor = 'white'
-              }
-            }}
-          >
-            全部
-          </button>
-        {categories.map(category => (
-          <button
-            key={category}
-            onClick={() => handleCategoryChange(category)}
-            style={{
-              padding: '8px 16px',
-              borderRadius: '8px',
-              backgroundColor: effectiveCategory === category ? '#2563eb' : 'white',
-              color: effectiveCategory === category ? 'white' : '#4b5563',
-              cursor: 'pointer',
-              border: effectiveCategory === category ? '1px solid #2563eb' : '1px solid #e5e7eb',
-              overflow: 'hidden'
-            }}
-            onMouseEnter={(e) => {
-              if (effectiveCategory !== category) {
-                e.currentTarget.style.backgroundColor = '#f3f4f6'
-              }
-            }}
-            onMouseLeave={(e) => {
-              if (effectiveCategory !== category) {
-                e.currentTarget.style.backgroundColor = 'white'
-              }
-            }}
-          >
-            {category}
-          </button>
-        ))}
-      </div>
+        <div className="layout">
+          {/* 左侧分类栏：固定在视口内，可单独滚动 */}
+          <aside className="sidebar" ref={sidebarRef}>
+            <nav className="categories" ref={categoriesRef} onScroll={updateCategoryFade}>
+              {renderChip('', '全部')}
+              {categories.map(category => renderChip(category, category))}
+            </nav>
+          </aside>
 
-      {/* 站点网格 */}
-      <main style={{ 
-        maxWidth: '1280px',
-        margin: '20px auto',
-        padding: '24px 16px',
-        backgroundColor: 'rgba(255, 255, 255, 0.06)',
-        backdropFilter: 'blur(12px)',
-        borderRadius: '8px',
-        overflow: 'hidden'
-      }}>
-        {/* 分类标题 */}
-        {effectiveCategory && (
-          <h2 style={{
-            fontSize: '18px',
-            fontWeight: '600',
-            color: '#111827',
-            marginBottom: '16px'
-          }}>{effectiveCategory}</h2>
-        )}
-        
-        {/* 站点图标网格 */}
-        <div style={{ 
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))',
-          gap: '16px'
-        }}>
-          {filteredSites.map(site => (
-            <div 
-              key={site.id} 
-              style={{ 
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                padding: '12px',
-                backgroundColor: 'white',
-                borderRadius: '8px',
-                boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
-                transition: 'all 0.2s',
-                border: selectedSites.includes(site.id) ? '2px solid #2563eb' : 'none',
-                cursor: 'pointer',
-                overflow: 'hidden'
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.boxShadow = '0 4px 6px rgba(0,0,0,0.1)'
-                e.currentTarget.style.transform = 'translateY(-2px)'
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.1)'
-                e.currentTarget.style.transform = 'translateY(0)'
-              }}
-              onClick={() => {
-                if (editMode) {
-                  handleEditSite(site)
-                } else {
-                  window.open(site.url, '_blank', 'noopener,noreferrer')
-                }
-              }}
-            >
-              <div style={{ 
-                width: '60px',
-                height: '60px',
-                borderRadius: '12px',
-                overflow: 'hidden',
-                marginBottom: '8px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                backgroundColor: '#f3f4f6'
-              }}>
-                <FaviconImg key={site.url} url={site.url} />
+          {/* 站点网格 */}
+          <main className="panel" ref={panelRef} onPointerMove={handlePanelMove}>
+            {effectiveCategory && <h2 className="panel-title">{effectiveCategory}</h2>}
+
+            {sitesLoading ? (
+              <div className="site-grid" aria-busy="true">
+                {SKELETON_CARDS.map(i => (
+                  <div key={i} className="site-card skeleton" style={{ animationDelay: `${i * 40}ms` }}>
+                    <div className="site-icon" />
+                    <div className="site-text">
+                      <span className="skeleton-line" />
+                      <span className="skeleton-line short" />
+                    </div>
+                  </div>
+                ))}
               </div>
-              <span
-                style={{
-                  fontSize: '14px',
-                  color: '#111827',
-                  textAlign: 'center',
-                  maxWidth: '100%',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap'
-                }}
-              >
-                {site.name}
-              </span>
-              {editMode && (
-                <input
-                  type="checkbox"
-                  checked={selectedSites.includes(site.id)}
-                  onChange={() => handleSiteSelect(site.id)}
-                  onClick={(e) => e.stopPropagation()}
-                  style={{ 
-                    width: '16px',
-                    height: '16px',
-                    marginTop: '8px',
-                    color: '#2563eb'
-                  }}
-                />
-              )}
-            </div>
-          ))}
+            ) : filteredSites.length === 0 ? (
+              <p className="empty">{emptyText}</p>
+            ) : (
+              // key 随分类变化，切换分类时卡片重新挂载以重播入场动画
+              <div className={`site-grid${editMode ? ' editing' : ''}`} key={effectiveCategory}>
+                {filteredSites.map((site, index) => (
+                  <div
+                    key={site.id}
+                    className={`site-card${selectedSet.has(site.id) ? ' selected' : ''}`}
+                    style={{ animationDelay: `${Math.min(index, 30) * 20}ms` }}
+                    title={editMode ? `编辑「${site.name}」` : `${site.name}\n${site.url}`}
+                    role={editMode ? 'button' : 'link'}
+                    tabIndex={0}
+                    onClick={() => activateSite(site)}
+                    onKeyDown={(e) => {
+                      if (e.target === e.currentTarget && e.key === 'Enter') activateSite(site)
+                    }}
+                  >
+                    <div className="site-icon">
+                      <FaviconImg key={site.url} url={site.url} />
+                    </div>
+                    <div className="site-text">
+                      <span className="site-name">{site.name}</span>
+                      <span className="site-domain">{hostOf(site.url)}</span>
+                    </div>
+                    {editMode && (
+                      <input
+                        className="site-check"
+                        type="checkbox"
+                        checked={selectedSet.has(site.id)}
+                        onChange={() => handleSiteSelect(site.id)}
+                        onClick={(e) => e.stopPropagation()}
+                        aria-label={`选择「${site.name}」`}
+                      />
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </main>
         </div>
-      </main>
-      {filteredSites.length === 0 && (
-        <div style={{ 
-          textAlign: 'center',
-          padding: '48px',
-          maxWidth: '1280px',
-          margin: '0 auto'
-        }}>
-          <p style={{ 
-            color: '#6b7280'
-          }}>暂无站点，请添加或导入收藏夹</p>
-        </div>
-      )}
+      </div>
 
       {/* 添加站点表单 */}
       {showAddForm && (
-        <AddSiteForm 
-          onAdd={handleAddSite} 
-          onCancel={() => setShowAddForm(false)} 
+        <AddSiteForm
+          onAdd={handleAddSite}
+          onCancel={() => setShowAddForm(false)}
           categories={categories}
+          defaultCategory={effectiveCategory}
         />
       )}
 
       {/* 导入收藏夹表单 */}
       {showImportForm && (
-        <ImportBookmarks 
-          onComplete={handleImportComplete} 
-          onCancel={() => setShowImportForm(false)} 
+        <ImportBookmarks
+          onComplete={handleImportComplete}
+          onCancel={() => setShowImportForm(false)}
         />
       )}
 
       {/* 密码表单 */}
       {showPasswordForm && (
-        <div style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          backgroundColor: 'rgba(0, 0, 0, 0.5)',
-          display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center',
-          zIndex: 1000
-        }}>
-          <div style={{
-            backgroundColor: 'white',
-            borderRadius: '8px',
-            padding: '24px',
-            maxWidth: '400px',
-            width: '100%'
-          }}>
-            <h2 style={{
-              fontSize: '18px',
-              fontWeight: '600',
-              color: '#111827',
-              margin: '0 0 16px 0'
-            }}>请输入密码以进入编辑模式</h2>
-            <form onSubmit={handlePasswordSubmit}>
-              <div style={{
-                marginBottom: '16px'
-              }}>
-                <label style={{
-                  display: 'block',
-                  fontSize: '14px',
-                  fontWeight: '500',
-                  color: '#374151',
-                  marginBottom: '6px'
-                }}>密码</label>
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  style={{
-                    width: '100%',
-                    padding: '8px 12px',
-                    borderRadius: '6px',
-                    border: '1px solid #d1d5db',
-                    fontSize: '14px'
-                  }}
-                  required
-                />
-                {passwordError && (
-                  <p style={{
-                    color: '#dc2626',
-                    fontSize: '12px',
-                    marginTop: '4px'
-                  }}>{passwordError}</p>
-                )}
-              </div>
-              <div style={{
-                display: 'flex',
-                gap: '8px',
-                justifyContent: 'flex-end'
-              }}>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowPasswordForm(false)
-                    setPassword('')
-                    setPasswordError('')
-                  }}
-                  style={{
-                    padding: '8px 16px',
-                    backgroundColor: '#f3f4f6',
-                    color: '#4b5563',
-                    borderRadius: '6px',
-                    cursor: 'pointer',
-                    border: 'none'
-                  }}
-                >
-                  取消
-                </button>
-                <button
-                  type="submit"
-                  style={{
-                    padding: '8px 16px',
-                    backgroundColor: '#2563eb',
-                    color: 'white',
-                    borderRadius: '6px',
-                    cursor: 'pointer',
-                    border: 'none'
-                  }}
-                >
-                  确定
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+        <Modal title="进入编辑模式" onClose={closePasswordForm}>
+          <form onSubmit={handlePasswordSubmit}>
+            <div className="field">
+              <label className="field-label">密码</label>
+              <input
+                className="field-input"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                autoComplete="current-password"
+                autoFocus
+                required
+              />
+              {passwordError && <p className="field-error">{passwordError}</p>}
+            </div>
+            <div className="modal-actions">
+              <button type="button" className="mbtn mbtn-secondary" onClick={closePasswordForm}>取消</button>
+              <button type="submit" className="mbtn mbtn-primary" disabled={verifying}>
+                {verifying ? '验证中...' : '确定'}
+              </button>
+            </div>
+          </form>
+        </Modal>
       )}
 
       {/* 添加分类表单 */}
       {showAddCategoryForm && (
-        <div style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          backgroundColor: 'rgba(0, 0, 0, 0.5)',
-          display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center',
-          zIndex: 1000
-        }}>
-          <div style={{
-            backgroundColor: 'white',
-            borderRadius: '8px',
-            padding: '24px',
-            maxWidth: '400px',
-            width: '100%'
-          }}>
-            <h2 style={{
-              fontSize: '18px',
-              fontWeight: '600',
-              color: '#111827',
-              margin: '0 0 16px 0'
-            }}>添加分类</h2>
-            <form onSubmit={(e) => {
-              e.preventDefault()
-              handleAddCategory(newCategory)
-            }}>
-              <div style={{
-                marginBottom: '16px'
-              }}>
-                <label style={{
-                  display: 'block',
-                  fontSize: '14px',
-                  fontWeight: '500',
-                  color: '#374151',
-                  marginBottom: '6px'
-                }}>分类名称</label>
-                <input
-                  type="text"
-                  value={newCategory}
-                  onChange={(e) => setNewCategory(e.target.value)}
-                  style={{
-                    width: '100%',
-                    padding: '8px 12px',
-                    borderRadius: '6px',
-                    border: '1px solid #d1d5db',
-                    fontSize: '14px'
-                  }}
-                  placeholder="例如：搜索"
-                  required
-                />
-              </div>
-              <div style={{
-                display: 'flex',
-                gap: '8px',
-                justifyContent: 'flex-end'
-              }}>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowAddCategoryForm(false)
-                    setNewCategory('')
-                  }}
-                  style={{
-                    padding: '8px 16px',
-                    backgroundColor: '#f3f4f6',
-                    color: '#4b5563',
-                    borderRadius: '6px',
-                    cursor: 'pointer',
-                    border: 'none'
-                  }}
-                >
-                  取消
-                </button>
-                <button
-                  type="submit"
-                  style={{
-                    padding: '8px 16px',
-                    backgroundColor: '#2563eb',
-                    color: 'white',
-                    borderRadius: '6px',
-                    cursor: 'pointer',
-                    border: 'none'
-                  }}
-                >
-                  添加
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+        <Modal title="添加分类" onClose={closeCategoryForm}>
+          <form onSubmit={handleAddCategory}>
+            <div className="field">
+              <label className="field-label">分类名称</label>
+              <input
+                className="field-input"
+                type="text"
+                value={newCategory}
+                onChange={(e) => {
+                  setNewCategory(e.target.value)
+                  setCategoryError('')
+                }}
+                placeholder="例如：搜索"
+                maxLength={50}
+                autoFocus
+                required
+              />
+              {categoryError && <p className="field-error">{categoryError}</p>}
+            </div>
+            <div className="modal-actions">
+              <button type="button" className="mbtn mbtn-secondary" onClick={closeCategoryForm}>取消</button>
+              <button type="submit" className="mbtn mbtn-primary" disabled={categorySaving}>
+                {categorySaving ? '添加中...' : '添加'}
+              </button>
+            </div>
+          </form>
+        </Modal>
       )}
 
       {/* 编辑标题表单 */}
@@ -941,88 +786,45 @@ function App() {
         <EditTitleForm
           browserTitle={browserTitle}
           headerTitle={headerTitle}
-          onSave={async (bt, ht) => {
-            const s = await updateSettings({ browserTitle: bt, headerTitle: ht, rememberCategory, savedCategory })
-            setBrowserTitle(s.browserTitle)
-            setHeaderTitle(s.headerTitle)
-            setRememberCategory(s.rememberCategory || false)
-            setSavedCategory(s.savedCategory || '')
-            setShowEditTitleForm(false)
-          }}
+          onSave={handleSaveTitles}
           onCancel={() => setShowEditTitleForm(false)}
         />
       )}
 
       {/* 编辑网站表单 */}
-      {showEditForm && editingSite && (
-        <div style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          backgroundColor: 'rgba(0, 0, 0, 0.5)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          padding: '16px',
-          zIndex: 50
-        }}>
-          <div style={{
-            backgroundColor: 'white',
-            borderRadius: '8px',
-            boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)',
-            width: '100%',
-            maxWidth: '400px',
-            padding: '24px'
-          }}>
-            <div style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              marginBottom: '16px'
-            }}>
-              <h2 style={{
-                fontSize: '20px',
-                fontWeight: 'bold',
-                color: '#111827'
-              }}>编辑站点</h2>
-              <button 
-                onClick={() => {
-                  setShowEditForm(false)
-                  setEditingSite(null)
-                }}
-                style={{
-                  color: '#6b7280',
-                  cursor: 'pointer',
-                  background: 'none',
-                  border: 'none',
-                  fontSize: '20px'
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.color = '#4b5563'
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.color = '#6b7280'
-                }}
-              >
-                ×
-              </button>
-            </div>
-
-            <EditSiteForm 
-              site={editingSite} 
-              categories={categories}
-              onUpdate={handleUpdateSite} 
-              onCancel={() => {
-                setShowEditForm(false)
-                setEditingSite(null)
-              }} 
-            />
-          </div>
-        </div>
+      {editingSite && (
+        <Modal title="编辑站点" onClose={() => setEditingSite(null)}>
+          <EditSiteForm
+            key={editingSite.id}
+            site={editingSite}
+            categories={categories}
+            onUpdate={handleUpdateSite}
+            onCancel={() => setEditingSite(null)}
+          />
+        </Modal>
       )}
-    </div>
+
+      {/* 确认框 */}
+      {confirmState && (
+        <Modal title={confirmState.title} onClose={() => !confirmBusy && setConfirmState(null)} showClose={!confirmBusy}>
+          <p className="confirm-message">{confirmState.message}</p>
+          <div className="modal-actions">
+            <button type="button" className="mbtn mbtn-secondary" onClick={() => setConfirmState(null)} disabled={confirmBusy}>
+              取消
+            </button>
+            <button type="button" className="mbtn mbtn-danger" onClick={runConfirm} disabled={confirmBusy} autoFocus>
+              {confirmBusy ? '处理中...' : confirmState.confirmText}
+            </button>
+          </div>
+        </Modal>
+      )}
+
+      {/* 轻提示 */}
+      <div className="toast-stack" aria-live="polite">
+        {toasts.map(toast => (
+          <div key={toast.id} className={`toast toast-${toast.type}`}>{toast.message}</div>
+        ))}
+      </div>
     </>
   )
 }

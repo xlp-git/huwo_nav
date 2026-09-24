@@ -1,10 +1,7 @@
 name = "huwo-nav"
-main = "src/worker.js"
 compatibility_date = "2026-02-11"
 
 kv_namespaces = [
   { binding = "NAV_SITES", id = "", preview_id = "" }
 ]
 
-[site]
-bucket = "dist"

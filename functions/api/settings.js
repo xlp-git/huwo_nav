@@ -2,7 +2,19 @@ const DEFAULT_SETTINGS = {
   browserTitle: '小鹏导航',
   headerTitle: '我的个人网址导航',
   rememberCategory: false,
-  savedCategory: '',
+}
+
+// 只保存已知字段，防止写入任意内容
+function sanitize(input) {
+  const settings = { ...DEFAULT_SETTINGS }
+  if (typeof input?.browserTitle === 'string' && input.browserTitle.trim()) {
+    settings.browserTitle = input.browserTitle.trim().slice(0, 100)
+  }
+  if (typeof input?.headerTitle === 'string' && input.headerTitle.trim()) {
+    settings.headerTitle = input.headerTitle.trim().slice(0, 100)
+  }
+  settings.rememberCategory = Boolean(input?.rememberCategory)
+  return settings
 }
 
 export async function onRequest(context) {
@@ -12,7 +24,7 @@ export async function onRequest(context) {
   if (method === 'GET') {
     try {
       const raw = await env.NAV_SITES.get('app_settings')
-      const settings = raw ? JSON.parse(raw) : DEFAULT_SETTINGS
+      const settings = raw ? { ...DEFAULT_SETTINGS, ...JSON.parse(raw) } : DEFAULT_SETTINGS
       return new Response(JSON.stringify(settings), {
         headers: { 'Content-Type': 'application/json' },
       })
@@ -26,7 +38,7 @@ export async function onRequest(context) {
 
   if (method === 'PUT') {
     try {
-      const settings = await request.json()
+      const settings = sanitize(await request.json())
       await env.NAV_SITES.put('app_settings', JSON.stringify(settings))
       return new Response(JSON.stringify(settings), {
         headers: { 'Content-Type': 'application/json' },
