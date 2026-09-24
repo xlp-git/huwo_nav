@@ -45,6 +45,7 @@ npm run deploy       # 通过 Wrangler 部署 dist/ 到 Cloudflare Pages
 │       ├── sites.js            # 站点 CRUD API (GET/POST/PUT/DELETE)，字段白名单 + URL 校验
 │       ├── import.js           # 收藏夹导入 API (POST JSON)，校验 + 去重合并
 │       ├── categories.js       # 分类管理 API (PUT 重命名 / DELETE 删除)
+│       ├── last-category.js    # 记录上次查看的分类 (PUT，唯一免密写接口)
 │       └── settings.js         # 应用设置 API (GET/PUT)，只保存已知字段
 ├── src/
 │   ├── main.jsx                # React 入口，StrictMode + createRoot
@@ -98,8 +99,8 @@ App.jsx 是唯一的状态持有者，子组件通过 props 接收回调和数�
 | `visibleSites` | `[]` (useMemo) | 去掉 `isPlaceholder` 的真实站点，用于展示、搜索和计数 |
 | `categories` | useMemo | 分类列表（含只有占位的空分类） |
 | `activeCategory` | `null\|string` | 手动选择的分类（null = 未选，'' = 全部）；已不存在的分类视为 null |
-| `savedCategory` | `string` | 本设备记录的上次分类（localStorage `nav_saved_category`） |
-| `effectiveCategory` | 派生 | `有效的 activeCategory ?? 有效的 savedCategory ?? categories[0] ?? ''` |
+| `savedCategory` | `string` | 设置里记录的上次分类（KV，各设备通用）：`''` 无记录，`'__all__'` 全部，其余为分类名 |
+| `effectiveCategory` | 派生 | `有效的 activeCategory ?? (记录分类开启时)有效的 savedCategory ?? navCategories[0] ?? ''` |
 | `selectedSites` | `[]` | 选中的站点 ID；批量操作只作用于当前可见的已选站点（`visibleSelected`），切换分类/退出编辑时清空 |
 | `editMode` / `verifying` | `boolean` | 编辑模式 / 密码校验中 |
 | `editingSite` | `object\|null` | 非空即显示编辑站点弹窗 |
@@ -113,7 +114,7 @@ App.jsx 是唯一的状态持有者，子组件通过 props 接收回调和数�
 ### 后端：Pages Functions
 
 - 通过文件路径路由：`functions/api/xxx.js` → `/api/xxx`
-- `_middleware.js` 作用于 `/api/*`：GET/HEAD/OPTIONS 放行；其余请求要求请求头 `X-Edit-Password`（URI 编码）与环境变量 `EDIT_PASSWORD` 一致（SHA-256 摘要后逐字节比较），否则 401；未配置 `EDIT_PASSWORD` 时拒绝一切写入（503）
+- `_middleware.js` 作用于 `/api/*`：GET/HEAD/OPTIONS 放行，`PUT /api/last-category` 免密放行（只能改记录的分类）；其余请求要求请求头 `X-Edit-Password`（URI 编码）与环境变量 `EDIT_PASSWORD` 一致（SHA-256 摘要后逐字节比较），否则 401；未配置 `EDIT_PASSWORD` 时拒绝一切写入（503）
 - 所有写操作都是"读出 `all_sites` 整个数组 → 修改 → 写回"
 
 ### API 路由详情
@@ -136,9 +137,11 @@ App.jsx 是唯一的状态持有者，子组件通过 props 接收回调和数�
 
 **`DELETE /api/categories`**（需密码）— body `{ name, mode }`：`mode: 'move'` 删除该分类的占位记录、其余站点 `category` 置空（归入未分类，只在"全部"中显示）；`mode: 'delete'` 连同站点一起删除。返回完整数组。
 
+**`PUT /api/last-category`**（**免密**）— body `{ category }`，只改 `app_settings.savedCategory`。记录分类未开启返回 409；值没变不写 KV；返回完整设置。
+
 **`GET /api/settings`** — 返回 `app_settings`，缺省字段用默认值补齐。
 
-**`PUT /api/settings`**（需密码）— **按字段合并**：只更新请求中出现的已知字段 `browserTitle` / `headerTitle` / `rememberCategory` / `categoryOrder`，其余保留原值，未知字段丢弃；标题截断到 100 字，`categoryOrder` 去重、每项截断 50 字、最多 500 项。
+**`PUT /api/settings`**（需密码）— **按字段合并**：只更新请求中出现的已知字段 `browserTitle` / `headerTitle` / `rememberCategory` / `categoryOrder` / `savedCategory`，其余保留原值，未知字段丢弃；标题截断到 100 字，`categoryOrder` 去重、每项截断 50 字、最多 500 项。
 
 ### 数据模型
 
@@ -164,11 +167,12 @@ App.jsx 是唯一的状态持有者，子组件通过 props 接收回调和数�
   "browserTitle": "小鹏导航",
   "headerTitle": "我的个人网址导航",
   "rememberCategory": false,
-  "categoryOrder": ["常用", "开发工具"]   // 分类显示顺序（拖动排序保存），未列出的分类按出现顺序排在后面
+  "categoryOrder": ["常用", "开发工具"],  // 分类显示顺序（拖动排序保存），未列出的分类按出现顺序排在后面
+  "savedCategory": "常用"                 // 记录分类开启时上次查看的分类（按名称）；'' 无记录，'__all__' 全部
 }
 ```
 
-"上次查看的分类"只存本设备 localStorage `nav_saved_category`（普通浏览时无需密码、不消耗 KV 写入额度），兼容读取旧版存在 `nav_settings.savedCategory` 的值。
+"记录分类"：开启时切换分类即通过免密接口写 `savedCategory`（值没变不写），刷新或换设备打开时恢复；关闭时清空记录、不写也不恢复，首页打开排第一的分类。首屏先用 localStorage 缓存的设置恢复，避免闪现第一个分类。
 
 ### 本地开发模式
 
@@ -544,3 +548,20 @@ App.jsx 是唯一的状态持有者，子组件通过 props 接收回调和数�
 - **固定项**："全部"和虚拟"未分类"不参与排序（无 `data-sortable`）
 - **联动**：重命名分类时替换顺序中的名称（位置不变）；删除分类时从顺序中移除；排序开始前固定当前查看的分类，避免默认分类随顺序变化跳走
 - 验证：后端新增设置合并用例（共 21 个通过）；浏览器验证鼠标拖动、轻点仍切换、"全部"不可拖、Alt+↑/↓、重命名保持位置、改标题不清空顺序、删除移出顺序、刷新后顺序保持且默认打开第一个分类；手机（CDP 触摸事件）验证快速滑动只滚动列表、长按后拖动生效且列表不跟随滚动
+
+### 24. 记录分类修复：开关语义明确、改存 KV 各设备通用（`functions/api/last-category.js` + `_middleware.js` + `settings.js` + `src/storage.js` + `src/App.jsx`，2026-09-24）
+
+**原因**：用户部署后发现记录分类功能异常。排查有三个问题：
+1. 刷新时不管开关状态都恢复记录（#10 的"关闭只是不再记录，已有记录照样恢复"）。加了拖动排序（排第一即默认分类）后两者冲突：本设备留着旧记录时，拖动排序对首页不生效
+2. #17 把记录改存本设备 localStorage 时没有迁移，服务端设置又会丢掉未知字段 `savedCategory`，部署后原来 KV 里的记录丢失，各设备都要重新记录
+3. 点"全部"存的是空字符串，读取时被当成"无记录"，记不住"全部"
+
+用户确认的语义：记录分类是唯一的记忆功能——开启时选中哪个分类，下次打开或刷新就是哪个；关闭时不记录也不恢复；拖动排序只管顺序；记录要各设备通用；避免重复写数据。
+
+**修改**：
+- **存回 KV**：`app_settings` 新增 `savedCategory`（按分类名记录，拖动排序不影响；`'__all__'` 表示全部，`'__uncategorized__'` 表示未分类）；删除本设备 `nav_saved_category` 及旧版兼容读取
+- **新增免密接口 `PUT /api/last-category`**：普通浏览切换分类也要记录，而其他写接口都要密码，所以单开一个只能改 `savedCategory` 的接口，`_middleware.js` 按"方法 + 路径"白名单放行；服务端校验记录分类已开启（否则 409），值没变不写 KV
+- **前端**：`effectiveCategory` 只在开关开启时用记录；切换分类时只有开关开启且值变化才写入；开启开关时记下当前分类，关闭时在同一次写入中清空记录（关闭时当前视图不跳）；首屏用缓存的设置初始化，避免先闪现第一个分类
+- **联动**：重命名已记录的分类时，记录与分类顺序一起改名，合并为一次设置写入；删除分类不再特意清记录（不存在的分类恢复时自动忽略）；保存标题不再附带 `rememberCategory`
+- **安全取舍**：免密接口只能改一个字段，最坏情况是被人改掉首页默认打开的分类、消耗 KV 写入额度，不影响站点数据
+- 验证：后端新增 4 个用例（共 25 个通过）；生产构建 + 真实 functions 代码的浏览器测试 21 项通过：关闭时切换不写 KV、刷新打开第一的分类（忽略旧本设备记录）；开启后普通浏览切换写 1 次、重复点不写、刷新和另一台设备都恢复；排序变化后仍恢复记录的分类；可记录"全部""未分类"；关闭后视图不跳、记录清空、两台设备刷新都为第一；重命名后记录和顺序同步新名
